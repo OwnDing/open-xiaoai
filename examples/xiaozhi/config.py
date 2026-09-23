@@ -60,6 +60,23 @@ APP_CONFIG = {
         # 最小静默时长（ms）
         "min_silence_duration": 500,
     },
+    "tts_output": {
+        # 可选："sherpa"（服务端音频流）或 "native_xiaomi"（音箱原生音色）
+        # Docker 部署可通过 XIAOZHI_TTS_OUTPUT_MODE 环境变量覆盖。
+        "mode": "native_xiaomi",
+        "native_xiaomi": {
+            # 第一段立即播放；后续文本按目标长度或短暂等待进行合并。
+            "target_chars": 80,
+            "max_chars": 120,
+            "flush_delay_ms": 250,
+            # 已合成但尚未播放的最大段数。
+            "prefetch_segments": 2,
+            "generate_timeout_ms": 5000,
+            "play_timeout_ms": 10 * 60 * 1000,
+            "max_file_bytes": 8 * 1024 * 1024,
+            "max_total_bytes": 8 * 1024 * 1024,
+        },
+    },
     "xiaozhi": {
         "OTA_URL": "https://api.tenclass.net/xiaozhi/ota/",
         "WEBSOCKET_URL": "wss://api.tenclass.net/xiaozhi/v1/",

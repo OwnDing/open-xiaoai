@@ -42,8 +42,9 @@ async fn test() -> Result<(), AppError> {
                 channels: 1,
                 bits_per_sample: 16,
                 sample_rate: 24000,
-                period_size: 1440 / 4,
-                buffer_size: 1440,
+                // Keep enough audio queued to absorb Wi-Fi and scheduler jitter.
+                period_size: 960,  // 40 ms at 24 kHz
+                buffer_size: 4800, // 200 ms at 24 kHz
             })),
             None,
         )

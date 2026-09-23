@@ -1,0 +1,35 @@
+services:
+  xiaozhi-esp32-server:
+    build:
+      context: ./xiaozhi-server-overrides
+    image: local/xiaozhi-esp32-server:smooth-audio
+    container_name: xiaozhi-esp32-server
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      - TZ=Asia/Shanghai
+      - XIAOZHI_TTS_OUTPUT_MODE=${XIAOZHI_TTS_OUTPUT_MODE:-sherpa}
+    ports:
+      - "18000:8000"
+      - "18003:8003"
+    volumes:
+      - ./data:/opt/xiaozhi-esp32-server/data
+      - ./models/SenseVoiceSmall/model.pt:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt
+    depends_on:
+      sherpa-tts:
+        condition: service_healthy
+
+  sherpa-tts:
+    build:
+      context: ./sherpa-tts
+    image: local/sherpa-onnx-tts:1.0
+    container_name: sherpa-tts
+    restart: unless-stopped
+    environment:
+      - SHERPA_NUM_THREADS=3
+      - SHERPA_SPEED=1.0
+      - SHERPA_SILENCE_SCALE=0.2
+      - SHERPA_EDGE_FADE_MS=5
+    expose:
+      - "11996"

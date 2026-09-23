@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 
 import websockets
@@ -28,72 +29,82 @@ class WebsocketProtocol(Protocol):
         )
         self.CLIENT_ID = self.config.get_client_id()
         self.DEVICE_ID = self.config.get_device_id()
+        self._connect_lock = asyncio.Lock()
+        self._heartbeat_task = None
+        self._want_connected = False
+        self._reconnect_initial_delay = 1
+        self._reconnect_max_delay = 30
 
     async def _close_websocket(self):
-        if self.websocket:
+        websocket = self.websocket
+        self.websocket = None
+        self.connected = False
+
+        if websocket:
             try:
-                await self.websocket.close()
-                self.websocket = None
-                self.connected = False
+                await websocket.close()
             except Exception:
                 pass
 
     async def connect(self) -> bool:
         """连接到WebSocket服务器"""
-        try:
-            await self._close_websocket()
+        async with self._connect_lock:
+            if self.is_audio_channel_opened():
+                return True
 
-            # 在连接时创建 Event，确保在正确的事件循环中
-            self.hello_received = asyncio.Event()
-
-            # 配置连接
-            headers = {
-                "Authorization": f"Bearer {self.WEBSOCKET_ACCESS_TOKEN}",
-                "Protocol-Version": "1",
-                "Device-Id": self.DEVICE_ID,  # 获取设备MAC地址
-                "Client-Id": self.CLIENT_ID,
-            }
-
-            # 建立WebSocket连接
-            self.websocket = await websockets.connect(
-                uri=self.WEBSOCKET_URL, additional_headers=headers
-            )
-
-            # 启动消息处理循环
-            asyncio.create_task(self._message_handler())
-
-            # 发送客户端hello消息
-            hello_message = {
-                "type": "hello",
-                "version": 1,
-                "transport": "websocket",
-                "audio_params": {
-                    "format": "opus",
-                    "sample_rate": 16000,
-                    "channels": 1,
-                    "frame_duration": 60,
-                },
-            }
-            await self.send_text(json.dumps(hello_message))
-
-            # 等待服务器hello响应
             try:
+                await self._close_websocket()
+
+                # 在连接时创建 Event，确保在正确的事件循环中
+                self.hello_received = asyncio.Event()
+
+                # 配置连接
+                headers = {
+                    "Authorization": f"Bearer {self.WEBSOCKET_ACCESS_TOKEN}",
+                    "Protocol-Version": "1",
+                    "Device-Id": self.DEVICE_ID,  # 获取设备MAC地址
+                    "Client-Id": self.CLIENT_ID,
+                }
+
+                # 建立WebSocket连接
+                websocket = await websockets.connect(
+                    uri=self.WEBSOCKET_URL, additional_headers=headers
+                )
+                self.websocket = websocket
+
+                # 启动消息处理循环
+                asyncio.create_task(self._message_handler(websocket))
+
+                # 发送客户端hello消息
+                hello_message = {
+                    "type": "hello",
+                    "version": 1,
+                    "transport": "websocket",
+                    "audio_params": {
+                        "format": "opus",
+                        "sample_rate": 16000,
+                        "channels": 1,
+                        "frame_duration": 60,
+                    },
+                }
+                await self.send_text(json.dumps(hello_message))
+
+                # 等待服务器hello响应
                 await asyncio.wait_for(self.hello_received.wait(), timeout=10.0)
+                if self.websocket is not websocket:
+                    return False
                 self.connected = True
                 return True
-            except asyncio.TimeoutError:
+            except Exception as e:
+                await self._close_websocket()
                 if self.on_network_error:
-                    self.on_network_error("等待响应超时")
+                    self.on_network_error(f"无法连接服务: {str(e)}")
                 return False
-        except Exception as e:
-            if self.on_network_error:
-                self.on_network_error(f"无法连接服务: {str(e)}")
-            return False
 
-    async def _message_handler(self):
+    async def _message_handler(self, websocket):
         """处理接收到的WebSocket消息"""
         try:
-            async for message in self.websocket:
+            async for message in websocket:
                 if isinstance(message, str):
                     try:
                         data = json.loads(message)
@@ -102,15 +113,24 @@ class WebsocketProtocol(Protocol):
                             await self._handle_server_hello(data)
                         else:
                             if self.on_incoming_json:
-                                self.on_incoming_json(data)
+                                result = self.on_incoming_json(data)
+                                if inspect.isawaitable(result):
+                                    await result
                     except json.JSONDecodeError:
                         pass
                 elif self.on_incoming_audio:
                     self.on_incoming_audio(message)
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            self.connected = False
-            if self.on_audio_channel_closed:
-                await self.on_audio_channel_closed()
+            pass
+        finally:
+            # 只清理由本任务负责的连接，避免旧任务误关新连接。
+            if self.websocket is websocket:
+                self.websocket = None
+                self.connected = False
+                if self.on_audio_channel_closed:
+                    await self.on_audio_channel_closed()
 
     async def send_audio(self, frames: list[bytes]):
         """发送音频数据"""
@@ -121,26 +141,23 @@ class WebsocketProtocol(Protocol):
             for frame in frames:
                 await self.websocket.send(frame)
         except Exception:
-            pass
+            self.connected = False
 
     async def send_text(self, message: str):
         """发送文本消息"""
-        if self.websocket:
-            try:
-                await self.websocket.send(message)
-            except Exception as e:
-                raise e
+        if not self.websocket:
+            raise ConnectionError("WebSocket未连接")
+        await self.websocket.send(message)
+
     def is_audio_channel_opened(self) -> bool:
         """检查音频通道是否打开"""
         return self.websocket is not None and self.connected
 
-    _is_heartbeat_running = False
-
     async def open_audio_channel(self):
-        if not self._is_heartbeat_running:
-            self._is_heartbeat_running = True
-            asyncio.create_task(self.heartbeat())
-        await self.connect()
+        self._want_connected = True
+        if not self._heartbeat_task or self._heartbeat_task.done():
+            self._heartbeat_task = asyncio.create_task(self.heartbeat())
+        return await self.connect()
 
     async def _handle_server_hello(self, data: dict):
         """处理服务器的 hello 消息
@@ -186,24 +203,43 @@ class WebsocketProtocol(Protocol):
 
     async def close_audio_channel(self):
         """关闭音频通道"""
-        if self.websocket:
+        self._want_connected = False
+        heartbeat_task = self._heartbeat_task
+        self._heartbeat_task = None
+        if heartbeat_task and heartbeat_task is not asyncio.current_task():
+            heartbeat_task.cancel()
             try:
-                await self.websocket.close()
-                self.websocket = None
-                self.connected = False
-                if self.on_audio_channel_closed:
-                    await self.on_audio_channel_closed()
-            except Exception:
+                await heartbeat_task
+            except asyncio.CancelledError:
                 pass
 
+        was_opened = self.websocket is not None or self.connected
+        await self._close_websocket()
+        if was_opened and self.on_audio_channel_closed:
+            await self.on_audio_channel_closed()
+
     async def heartbeat(self):
-        while True:
-            if self.websocket and get_xiaozhi().device_state == DeviceState.IDLE:
+        reconnect_delay = self._reconnect_initial_delay
+
+        while self._want_connected:
+            if not self.is_audio_channel_opened():
+                if await self.connect():
+                    reconnect_delay = self._reconnect_initial_delay
+                    continue
+
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(
+                    reconnect_delay * 2, self._reconnect_max_delay
+                )
+                continue
+
+            reconnect_delay = self._reconnect_initial_delay
+            if get_xiaozhi().device_state == DeviceState.IDLE:
                 try:
                     await self.send_text(
                         json.dumps({"session_id": "", "type": "ping"})
                     )
                 except Exception:
-                    # 发送心跳失败，重新连接
-                    await self.open_audio_channel()
+                    # 让下一轮心跳执行带退避的重新连接。
+                    await self._close_websocket()
             await asyncio.sleep(1)

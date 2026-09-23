@@ -1,0 +1,5 @@
+fastapi>=0.115,<1
+numpy>=1.26,<3
+sherpa-onnx==1.13.8
+soxr>=0.5,<1
+uvicorn>=0.30,<1

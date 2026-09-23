@@ -116,6 +116,7 @@ class __EventManager:
 
         # 先取消之前的 VAD 检测和音频输入输出流
         xiaozhi.set_device_state(DeviceState.IDLE)
+        await xiaozhi.abort_tts_output()
         await xiaozhi.protocol.send_abort_speaking(AbortReason.ABORT)
 
         # 小爱同学唤醒时，直接打断

@@ -1,0 +1,16 @@
+services:
+  open-xiaoai-xiaozhi:
+    image: local/open-xiaoai-xiaozhi:smooth-audio
+    container_name: open-xiaoai-xiaozhi
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      XIAOZHI_TTS_OUTPUT_MODE: ${XIAOZHI_TTS_OUTPUT_MODE:-sherpa}
+    ports:
+      - "4399:4399"
+    volumes:
+      - ../../examples/xiaozhi/config.py:/app/config.py
+      - ../../examples/xiaozhi/xiaozhi/event.py:/app/xiaozhi/event.py:ro
+      - ../../examples/xiaozhi/xiaozhi/xiaozhi.py:/app/xiaozhi/xiaozhi.py:ro
+      - ../../examples/xiaozhi/xiaozhi/services/native_tts.py:/app/xiaozhi/services/native_tts.py:ro
+      - ../../examples/xiaozhi/xiaozhi/services/protocols/websocket_protocol.py:/app/xiaozhi/services/protocols/websocket_protocol.py:ro

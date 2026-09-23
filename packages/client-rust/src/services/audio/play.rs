@@ -95,7 +95,16 @@ impl AudioPlayer {
             while let Some(bytes) = rx.recv().await {
                 let mut write_guard = write_thread_clone.lock().await;
                 if let Some(write_thread) = write_guard.as_mut() {
-                    let _ = timeout(Duration::from_millis(100), write_thread.write_all(&bytes)).await;
+                    match timeout(Duration::from_millis(500), write_thread.write_all(&bytes)).await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            eprintln!("❌ 写入播放缓冲失败: {error}");
+                        }
+                        Err(_) => {
+                            eprintln!("❌ 写入播放缓冲超时");
+                        }
+                    }
                 } else {
                     break;
                 }

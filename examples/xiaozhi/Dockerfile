@@ -18,8 +18,8 @@ ENV CARGO_HOME=/root/.cargo \
     PATH=/root/.cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
 
-# 复制 uv（官方固定路径）
-COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /uvx /usr/local/bin/
+# 安装固定主版本的 uv，避免构建依赖额外的 GHCR 凭据助手。
+RUN python -m pip install --no-cache-dir "uv>=0.7,<0.8"
 
 # 工作目录
 WORKDIR /app

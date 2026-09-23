@@ -4,10 +4,16 @@ import re
 import threading
 import time
 
+from config import APP_CONFIG
 from xiaozhi.event import EventManager
 from xiaozhi.ref import set_xiaozhi
 from xiaozhi.services.audio.kws import KWS
 from xiaozhi.services.audio.vad import VAD
+from xiaozhi.services.native_tts import (
+    NativeTTSSettings,
+    NativeXiaomiTTS,
+    resolve_tts_output_mode,
+)
 from xiaozhi.services.protocols.typing import (
     AbortReason,
     DeviceState,
@@ -41,6 +47,18 @@ class XiaoZhi:
 
         # 获取配置管理器实例
         self.config = ConfigManager.instance()
+        tts_output_config = APP_CONFIG.get("tts_output", {})
+        self.tts_output_mode = resolve_tts_output_mode(
+            tts_output_config,
+            get_env("XIAOZHI_TTS_OUTPUT_MODE"),
+        )
+        native_config = tts_output_config.get("native_xiaomi", {})
+        self.native_tts = NativeXiaomiTTS(
+            XiaoAI.speaker,
+            NativeTTSSettings.from_config(native_config),
+        )
+        self._native_finish_task = None
+        print(f"🔈 TTS 输出模式: {self.tts_output_mode}")
 
         # 状态变量
         self.device_state = DeviceState.IDLE
@@ -212,22 +230,17 @@ class XiaoZhi:
 
     def _on_network_error(self, message):
         """网络错误回调"""
+        print(f"🌐 网络连接异常，将自动重试：{message}")
         self.set_device_state(DeviceState.IDLE)
-        if self.device_state != DeviceState.CONNECTING:
-            self.set_device_state(DeviceState.IDLE)
-
-            # 关闭现有连接
-            if self.protocol:
-                asyncio.run_coroutine_threadsafe(
-                    self.protocol.close_audio_channel(), self.loop
-                )
 
     def _on_incoming_audio(self, data):
         """接收音频数据回调"""
+        if self.tts_output_mode == "native_xiaomi":
+            return
         if self.device_state == DeviceState.SPEAKING:
             self.audio_codec.write_audio(data)
 
-    def _on_incoming_json(self, json_data):
+    async def _on_incoming_json(self, json_data):
         """接收JSON数据回调"""
         try:
             if not json_data:
@@ -242,27 +255,37 @@ class XiaoZhi:
             # 处理不同类型的消息
             msg_type = data.get("type", "")
             if msg_type == "tts":
-                self._handle_tts_message(data)
+                await self._handle_tts_message(data)
             elif msg_type == "stt":
                 self._handle_stt_message(data)
             elif msg_type == "llm":
                 self._handle_llm_message(data)
-        except Exception:
-            pass
+        except Exception as error:
+            print(f"❌ 处理服务端消息失败: {error}")
 
-    def _handle_tts_message(self, data):
+    async def _handle_tts_message(self, data):
         """处理TTS消息"""
         state = data.get("state", "")
         if state == "start":
+            if self.tts_output_mode == "native_xiaomi":
+                await self.native_tts.start(data.get("session_id"))
             EventManager.on_tts_start(data.get("session_id"))
             self.schedule(lambda: self._handle_tts_start())
         elif state == "stop":
-            EventManager.on_tts_end(data.get("session_id"))
-            self.schedule(lambda: self._handle_tts_stop())
+            if self.tts_output_mode == "native_xiaomi":
+                self._native_finish_task = asyncio.create_task(
+                    self._finish_native_tts(data.get("session_id"))
+                )
+            else:
+                EventManager.on_tts_end(data.get("session_id"))
+                self.schedule(lambda: self._handle_tts_stop())
         elif state == "sentence_start":
             text = data.get("text", "")
             if text:
                 print(f"🤖 小智：{text}")
+
+                if self.tts_output_mode == "native_xiaomi":
+                    await self.native_tts.add_text(text)
 
                 verification_code = re.search(r"验证码.*?(\d+)", text) or re.search(
                     r"控制面板.*?(\d+)", text
@@ -273,6 +296,25 @@ class XiaoZhi:
                     )
 
                 self.schedule(lambda: self.set_chat_message("assistant", text))
+
+    async def _finish_native_tts(self, session_id):
+        completed = await self.native_tts.finish()
+        if not completed:
+            return
+        if self.native_tts.error:
+            print(f"⚠️ 原生小爱 TTS 会话存在错误: {self.native_tts.error}")
+        EventManager.on_tts_end(session_id)
+        self.schedule(lambda: self._handle_tts_stop())
+
+    async def abort_tts_output(self):
+        if self.tts_output_mode != "native_xiaomi":
+            return
+        finish_task = self._native_finish_task
+        self._native_finish_task = None
+        if finish_task and not finish_task.done():
+            finish_task.cancel()
+            await asyncio.gather(finish_task, return_exceptions=True)
+        await self.native_tts.abort()
 
     def _handle_tts_start(self):
         """处理TTS开始事件"""
@@ -312,6 +354,7 @@ class XiaoZhi:
 
     async def _on_audio_channel_closed(self):
         """音频通道关闭回调"""
+        await self.abort_tts_output()
         self.set_device_state(DeviceState.IDLE)
         self.audio_codec.stop_streams()
 
@@ -418,7 +461,7 @@ class XiaoZhi:
 
         self.set_device_state(DeviceState.IDLE)
         asyncio.run_coroutine_threadsafe(
-            self.protocol.send_abort_speaking(AbortReason.ABORT),
+            self._abort_output_and_notify_server(),
             self.loop,
         )
         asyncio.run_coroutine_threadsafe(
@@ -439,9 +482,13 @@ class XiaoZhi:
         """中止语音输出"""
         self.set_device_state(DeviceState.IDLE)
         asyncio.run_coroutine_threadsafe(
-            self.protocol.send_abort_speaking(AbortReason.ABORT),
+            self._abort_output_and_notify_server(),
             self.loop,
         )
+
+    async def _abort_output_and_notify_server(self):
+        await self.abort_tts_output()
+        await self.protocol.send_abort_speaking(AbortReason.ABORT)
 
     def alert(self, title, message):
         """显示警告信息"""
@@ -455,6 +502,15 @@ class XiaoZhi:
     def shutdown(self):
         """关闭应用程序"""
         self.running = False
+
+        if self.loop and self.loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(
+                self.abort_tts_output(), self.loop
+            )
+            try:
+                future.result(timeout=2)
+            except Exception:
+                pass
 
         # 关闭音频编解码器
         if self.audio_codec:
