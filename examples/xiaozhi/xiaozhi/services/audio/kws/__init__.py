@@ -5,7 +5,7 @@ import time
 
 from config import APP_CONFIG
 from xiaozhi.event import EventManager
-from xiaozhi.ref import get_speaker, get_xiaoai, get_xiaozhi, set_kws
+from xiaozhi.ref import get_xiaozhi, set_kws
 from xiaozhi.services.audio.kws.sherpa import SherpaOnnx
 from xiaozhi.services.audio.stream import MyAudio
 from xiaozhi.services.protocols.typing import AudioConfig, DeviceState
@@ -75,7 +75,7 @@ class _KWS:
     def on_message(self, text: str):
         asyncio.run_coroutine_threadsafe(
             EventManager.wakeup(text, "kws"),
-            get_xiaoai().async_loop,
+            get_xiaozhi().loop,
         )
 
 

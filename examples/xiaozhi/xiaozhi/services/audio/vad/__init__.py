@@ -9,6 +9,13 @@ from xiaozhi.services.audio.vad.silero import Silero
 from xiaozhi.services.protocols.typing import AudioConfig
 from xiaozhi.utils.base import get_env
 
+PCM_SAMPLE_WIDTH_BYTES = 2
+
+
+def frame_sample_count(frames: bytes) -> int:
+    """Return mono S16_LE sample count instead of the raw byte count."""
+    return len(frames) // PCM_SAMPLE_WIDTH_BYTES
+
 
 class _VAD:
     def __init__(self):
@@ -76,7 +83,7 @@ class _VAD:
 
     def _handle_speech_frame(self, frames):
         """处理语音帧"""
-        self.speech_count += len(frames)
+        self.speech_count += frame_sample_count(frames)
         self.silence_count = 0
 
         if self.target == "speech":
@@ -98,7 +105,7 @@ class _VAD:
 
     def _handle_silence_frame(self, frames):
         """处理静音帧"""
-        self.silence_count += len(frames)
+        self.silence_count += frame_sample_count(frames)
         self.speech_count = 0
 
         if self.target == "speech":

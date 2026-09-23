@@ -298,13 +298,24 @@ class XiaoZhi:
                 self.schedule(lambda: self.set_chat_message("assistant", text))
 
     async def _finish_native_tts(self, session_id):
-        completed = await self.native_tts.finish()
-        if not completed:
-            return
-        if self.native_tts.error:
-            print(f"⚠️ 原生小爱 TTS 会话存在错误: {self.native_tts.error}")
-        EventManager.on_tts_end(session_id)
-        self.schedule(lambda: self._handle_tts_stop())
+        current_task = asyncio.current_task()
+        try:
+            completed = await self.native_tts.finish()
+            if not completed:
+                return
+            if self.native_tts.error:
+                print(f"⚠️ 原生小爱 TTS 会话存在错误: {self.native_tts.error}")
+
+            # Clear the task reference before starting the next listening
+            # session. Otherwise that session can race with this task and try
+            # to cancel/await it from another callback path.
+            if self._native_finish_task is current_task:
+                self._native_finish_task = None
+            EventManager.on_tts_end(session_id)
+            self.schedule(lambda: self._handle_tts_stop())
+        finally:
+            if self._native_finish_task is current_task:
+                self._native_finish_task = None
 
     async def abort_tts_output(self):
         if self.tts_output_mode != "native_xiaomi":
