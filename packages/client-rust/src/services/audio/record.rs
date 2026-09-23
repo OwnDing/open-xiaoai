@@ -19,6 +19,8 @@ enum State {
 }
 
 const A113_CAPTURE_BITS_PER_SAMPLE: u16 = 32;
+const RECORD_READ_TIMEOUT: Duration = Duration::from_millis(500);
+const MAX_CONSECUTIVE_READ_TIMEOUTS: usize = 10;
 
 pub struct AudioRecorder {
     state: Arc<Mutex<State>>,
@@ -78,6 +80,10 @@ impl AudioRecorder {
         let mut arecord_thread = spawn_arecord(&capture_config)?;
 
         let mut stdout = arecord_thread.stdout.take().unwrap();
+        // Publish the child before the reader starts. If arecord exits
+        // immediately, the reader can still reap it instead of leaving a
+        // stale child behind while the recorder is marked idle.
+        self.arecord_thread.lock().await.replace(arecord_thread);
         let read_thread = tokio::spawn(async move {
             let bytes_per_sample = (capture_config.bits_per_sample.max(8) / 8) as usize;
             let bytes_per_frame = bytes_per_sample * capture_config.channels.max(1) as usize;
@@ -88,34 +94,67 @@ impl AudioRecorder {
 
             let mut accumulated_data = Vec::with_capacity(target_size * 2);
             let mut buffer = vec![0u8; read_size];
+            let mut consecutive_timeouts = 0usize;
 
             loop {
-                match timeout(Duration::from_millis(500), stdout.read(&mut buffer)).await {
+                match timeout(RECORD_READ_TIMEOUT, stdout.read(&mut buffer)).await {
                     Ok(Ok(size)) if size > 0 => {
+                        consecutive_timeouts = 0;
                         accumulated_data.extend_from_slice(&buffer[..size]);
                         while accumulated_data.len() >= target_size {
                             let data_to_send =
                                 accumulated_data.drain(..target_size).collect::<Vec<u8>>();
-                            let data_to_send =
-                                transform_stream_chunk(data_to_send, &requested_config, &capture_config);
+                            let data_to_send = transform_stream_chunk(
+                                data_to_send,
+                                &requested_config,
+                                &capture_config,
+                            );
                             if !data_to_send.is_empty() {
                                 let _ = on_stream(data_to_send).await;
                             }
                         }
                     }
-                    _ => break,
+                    Ok(Ok(_)) => {
+                        eprintln!("⚠️ 录音进程已结束，等待服务端自动重启");
+                        break;
+                    }
+                    Ok(Err(error)) => {
+                        eprintln!("⚠️ 读取录音数据失败: {error}，等待服务端自动重启");
+                        break;
+                    }
+                    Err(_) => {
+                        consecutive_timeouts += 1;
+                        if recording_stalled(consecutive_timeouts) {
+                            eprintln!(
+                                "⚠️ 录音连续 {}ms 无数据，等待服务端自动重启",
+                                RECORD_READ_TIMEOUT.as_millis()
+                                    * MAX_CONSECUTIVE_READ_TIMEOUTS as u128
+                            );
+                            break;
+                        }
+                    }
                 }
             }
 
-            let _ = AudioRecorder::instance().stop_recording().await;
+            // Do not call stop_recording() from the reader task: it would abort
+            // its own JoinHandle. Release the child first, then mark the
+            // recorder idle so the server watchdog can start a fresh arecord.
+            let recorder = AudioRecorder::instance();
+            if let Some(mut arecord_thread) = recorder.arecord_thread.lock().await.take() {
+                let _ = timeout(Duration::from_millis(100), arecord_thread.kill()).await;
+            }
+            *recorder.state.lock().await = State::Idle;
         });
 
-        self.arecord_thread.lock().await.replace(arecord_thread);
         self.read_thread.lock().await.replace(read_thread);
 
         *state = State::Recording;
         Ok(())
     }
+}
+
+fn recording_stalled(consecutive_timeouts: usize) -> bool {
+    consecutive_timeouts >= MAX_CONSECUTIVE_READ_TIMEOUTS
 }
 
 fn capture_config_for_recording(requested: &AudioConfig) -> AudioConfig {
@@ -185,4 +224,29 @@ fn spawn_arecord(config: &AudioConfig) -> Result<Child, AppError> {
         .stderr(Stdio::null())
         .spawn()?;
     Ok(child)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{convert_a113_s32_to_s16, recording_stalled};
+
+    #[test]
+    fn tolerates_transient_recording_gaps() {
+        assert!(!recording_stalled(1));
+        assert!(!recording_stalled(9));
+        assert!(recording_stalled(10));
+    }
+
+    #[test]
+    fn converts_a113_s32_samples_to_s16() {
+        let samples = [0x007f_ff00i32, -0x0080_0000i32];
+        let input = samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect::<Vec<_>>();
+
+        let output = convert_a113_s32_to_s16(&input);
+
+        assert_eq!(output, [0xff, 0x7f, 0x00, 0x80]);
+    }
 }

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import shlex
 import uuid
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ class NativeTTSSettings:
     prefetch_segments: int = 2
     generate_timeout_ms: int = 5000
     play_timeout_ms: int = 10 * 60 * 1000
+    play_min_timeout_ms: int = 15000
+    play_timeout_grace_ms: int = 8000
     max_file_bytes: int = 8 * 1024 * 1024
     max_total_bytes: int = 8 * 1024 * 1024
 
@@ -40,7 +43,11 @@ class NativeTTSSettings:
         settings.flush_delay_ms = max(0, settings.flush_delay_ms)
         settings.prefetch_segments = max(1, settings.prefetch_segments)
         settings.generate_timeout_ms = max(1000, settings.generate_timeout_ms)
-        settings.play_timeout_ms = max(1000, settings.play_timeout_ms)
+        settings.play_min_timeout_ms = max(1000, settings.play_min_timeout_ms)
+        settings.play_timeout_grace_ms = max(1000, settings.play_timeout_grace_ms)
+        settings.play_timeout_ms = max(
+            settings.play_min_timeout_ms, settings.play_timeout_ms
+        )
         settings.max_file_bytes = max(1024, settings.max_file_bytes)
         settings.max_total_bytes = max(
             settings.max_file_bytes, settings.max_total_bytes
@@ -197,6 +204,7 @@ class NativeXiaomiTTS:
             raise
 
     async def _playback_worker(self, token):
+        playback_failed = False
         try:
             while token == self._token:
                 item = await self._audio_queue.get()
@@ -209,14 +217,19 @@ class NativeXiaomiTTS:
 
                 started = asyncio.get_running_loop().time()
                 try:
+                    watchdog_ms = self._playback_timeout_ms(audio_path)
+                    watchdog_seconds = max(1, math.ceil(watchdog_ms / 1000))
                     result = await self.speaker.run_shell(
+                        "busybox timeout "
+                        f"-t {watchdog_seconds} -s KILL "
                         f"miplayer -f {shlex.quote(audio_path)}",
-                        timeout=self.settings.play_timeout_ms,
+                        timeout=watchdog_ms + 3000,
                     )
                     if result.exit_code != 0:
                         raise RuntimeError(
                             result.stderr.strip()
-                            or f"miplayer exit code {result.exit_code}"
+                            or "miplayer exit code "
+                            f"{result.exit_code} (watchdog={watchdog_seconds}s)"
                         )
                     elapsed = asyncio.get_running_loop().time() - started
                     print(
@@ -226,17 +239,45 @@ class NativeXiaomiTTS:
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:
+                    playback_failed = True
                     self._error = str(error)
                     print(f"❌ 原生小爱 TTS 播放失败: {error}")
+                    await self._stop_miplayer()
                 finally:
                     await self._delete_audio_file(audio_path)
+                if playback_failed:
+                    break
         except asyncio.CancelledError:
             raise
         finally:
             if token == self._token:
+                if playback_failed and self._generation_task:
+                    if not self._generation_task.done():
+                        self._generation_task.cancel()
+                    await asyncio.gather(
+                        self._generation_task, return_exceptions=True
+                    )
+                await self._cleanup_generated_files()
                 await self._restore_music_if_needed()
                 self._active = False
                 self._done_event.set()
+
+    def _playback_timeout_ms(self, audio_path):
+        size_bytes = self._generated_sizes.get(audio_path, 0)
+        estimated_ms = math.ceil(size_bytes * 8 / 32000 * 1000)
+        adaptive_ms = max(
+            self.settings.play_min_timeout_ms,
+            estimated_ms + self.settings.play_timeout_grace_ms,
+        )
+        return min(self.settings.play_timeout_ms, adaptive_ms)
+
+    async def _stop_miplayer(self):
+        try:
+            await self.speaker.run_shell(
+                "busybox killall miplayer 2>/dev/null || true", timeout=2000
+            )
+        except Exception:
+            pass
 
     async def _generate_audio(self, text, token):
         if token != self._token:

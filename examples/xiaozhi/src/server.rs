@@ -12,28 +12,20 @@ use pyo3::types::PyString;
 use pyo3::Python;
 use serde_json::json;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::time::{sleep, Duration};
 use tokio_tungstenite::accept_async;
 
 pub struct AppServer;
 
-async fn test() -> Result<(), AppError> {
-    SpeakerManager::play_text("已连接").await?;
-
-    let _ = RPC::instance()
-        .call_remote(
-            "start_recording",
-            Some(json!(AudioConfig {
-                pcm: "noop".into(),
-                channels: 1,
-                bits_per_sample: 16,
-                sample_rate: 16000,
-                period_size: 1440 / 4,
-                buffer_size: 1440,
-            })),
-            None,
-        )
-        .await;
-
+async fn audio_watchdog() {
+    let recording_config = json!(AudioConfig {
+        pcm: "noop".into(),
+        channels: 1,
+        bits_per_sample: 16,
+        sample_rate: 16000,
+        period_size: 1440 / 4,
+        buffer_size: 1440,
+    });
     let _ = RPC::instance()
         .call_remote(
             "start_play",
@@ -50,7 +42,19 @@ async fn test() -> Result<(), AppError> {
         )
         .await;
 
-    Ok(())
+    loop {
+        if let Err(error) = RPC::instance()
+            .call_remote(
+                "start_recording",
+                Some(recording_config.clone()),
+                Some(3_000),
+            )
+            .await
+        {
+            crate::pylog!("⚠️ 录音健康检查失败: {}", error);
+        }
+        sleep(Duration::from_secs(5)).await;
+    }
 }
 
 impl AppServer {
@@ -97,16 +101,25 @@ impl AppServer {
         let rpc = RPC::instance();
         rpc.add_command("get_version", get_version).await;
 
-        let test = tokio::spawn(async move {
+        let audio_watchdog = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            let _ = test().await;
+            audio_watchdog().await;
         });
-        TaskManager::instance().add("test", test).await;
+        TaskManager::instance()
+            .add("audio_watchdog", audio_watchdog)
+            .await;
+
+        // The welcome prompt must never delay microphone startup.
+        let welcome = tokio::spawn(async move {
+            let _ = SpeakerManager::play_text("已连接").await;
+        });
+        TaskManager::instance().add("welcome", welcome).await;
     }
 
     async fn dispose() {
         MessageManager::instance().dispose().await;
-        TaskManager::instance().dispose("test").await;
+        TaskManager::instance().dispose("audio_watchdog").await;
+        TaskManager::instance().dispose("welcome").await;
     }
 }
 

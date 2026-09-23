@@ -12,8 +12,9 @@ from xiaozhi.services.native_tts import (
 
 
 class FakeSpeaker:
-    def __init__(self, block_playback=False):
+    def __init__(self, block_playback=False, playback_exit_code=0):
         self.block_playback = block_playback
+        self.playback_exit_code = playback_exit_code
         self.play_started = asyncio.Event()
         self.release_playback = asyncio.Event()
         self.generated_texts = []
@@ -36,12 +37,14 @@ class FakeSpeaker:
         if script.startswith("busybox mv"):
             return SimpleNamespace(stdout="16000\n", stderr="", exit_code=0)
 
-        if script.startswith("miplayer -f"):
+        if "miplayer -f" in script:
             self.played_paths.append(shlex.split(script)[-1])
             self.play_started.set()
             if self.block_playback:
                 await self.release_playback.wait()
-            return SimpleNamespace(stdout="", stderr="", exit_code=0)
+            return SimpleNamespace(
+                stdout="", stderr="", exit_code=self.playback_exit_code
+            )
 
         if script.startswith("busybox rm -f"):
             self.deleted_paths.append(script)
@@ -58,6 +61,8 @@ class NativeXiaomiTTSTests(unittest.IsolatedAsyncioTestCase):
             "prefetch_segments": 2,
             "generate_timeout_ms": 1000,
             "play_timeout_ms": 1000,
+            "play_min_timeout_ms": 1000,
+            "play_timeout_grace_ms": 1000,
             "max_file_bytes": 1024 * 1024,
         }
         values.update(overrides)
@@ -105,6 +110,22 @@ class NativeXiaomiTTSTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(pipeline.active)
         self.assertTrue(any("killall miplayer" in item for item in speaker.commands))
         self.assertTrue(any("open-xiaoai-native-tts" in item for item in speaker.deleted_paths))
+
+    async def test_playback_watchdog_failure_restores_pipeline(self):
+        speaker = FakeSpeaker(playback_exit_code=137)
+        pipeline = NativeXiaomiTTS(speaker, self.settings())
+
+        await pipeline.start("session-4")
+        await pipeline.add_text("播放器超时测试。")
+        completed = await asyncio.wait_for(pipeline.finish(), timeout=1)
+
+        self.assertTrue(completed)
+        self.assertFalse(pipeline.active)
+        self.assertIn("miplayer exit code 137", pipeline.error)
+        self.assertTrue(
+            any(command.startswith("busybox timeout") for command in speaker.commands)
+        )
+        self.assertTrue(any("killall miplayer" in item for item in speaker.commands))
 
     def test_output_mode_validation(self):
         self.assertEqual(

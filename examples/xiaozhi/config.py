@@ -73,6 +73,9 @@ APP_CONFIG = {
             "prefetch_segments": 2,
             "generate_timeout_ms": 5000,
             "play_timeout_ms": 10 * 60 * 1000,
+            # miplayer 偶发不退出时，按音频时长动态终止播放。
+            "play_min_timeout_ms": 15000,
+            "play_timeout_grace_ms": 8000,
             "max_file_bytes": 8 * 1024 * 1024,
             "max_total_bytes": 8 * 1024 * 1024,
         },
