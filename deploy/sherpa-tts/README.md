@@ -26,7 +26,7 @@ The bridge supports two output paths:
 On the Windows MINI, run the switch script from PowerShell:
 
 ```powershell
-cd C:\Users\djcmy\Documents\develop\ai\open-xiaoai\deploy\xiaozhi
+cd C:\path\to\open-xiaoai\deploy\xiaozhi
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\switch-output-mode.ps1 native_xiaomi
 ```
 
@@ -35,6 +35,9 @@ To switch back:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\switch-output-mode.ps1 sherpa
 ```
+
+If `xiaozhi-server` is not located at the script's default sibling path,
+pass its Compose directory explicitly with `-ServerDir C:\path\to\xiaozhi-server`.
 
 The script updates the `.env` files for both Compose projects and recreates
 the backend first, followed by the bridge. The selected mode therefore

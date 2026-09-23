@@ -1,6 +1,6 @@
 # Open-XiaoAI x 小智 AI
 
-[Open-XiaoAI](https://github.com/idootop/open-xiaoai) 的 Python 版 Server 端，用来演示小爱音箱接入[小智 AI](https://github.com/78/xiaozhi-esp32)。
+[Open-XiaoAI](https://github.com/OwnDing/open-xiaoai) 的 Python 版 Server 端，用来演示小爱音箱接入[小智 AI](https://github.com/78/xiaozhi-esp32)。
 
 > [!IMPORTANT]
 > 本项目只是一个简单的演示程序，抛砖引玉。诸如一些音频压缩、加密传输、多账号管理等功能并未提供，建议只在局域网内测试运行，不推荐部署在公网服务器上（消耗流量 100kb/s），请自行评估相关风险，合理使用。
@@ -9,6 +9,7 @@
 - 支持连续对话和中途打断
 - 自定义唤醒词（中英文）和提示语
 - 支持自定义消息处理，方便个人定制
+- 支持 `native_xiaomi` 小爱原生音色与 `sherpa` 服务端流式语音切换
 
 ## 快速开始
 
@@ -19,7 +20,7 @@
 
 ```shell
 # 克隆代码
-git clone https://github.com/idootop/open-xiaoai.git
+git clone https://github.com/OwnDing/open-xiaoai.git
 
 # 进入当前项目根目录
 cd examples/xiaozhi
@@ -37,6 +38,11 @@ APP_CONFIG = {
             "hi siri",
         ],
     },
+    "tts_output": {
+        # native_xiaomi：使用音箱内置小爱音色
+        # sherpa：播放服务端生成的流式音频
+        "mode": "native_xiaomi",
+    },
     "xiaozhi": {
         "OTA_URL": "https://api.tenclass.net/xiaozhi/ota/",
         "WEBSOCKET_URL": "wss://api.tenclass.net/xiaozhi/v1/",
@@ -44,11 +50,40 @@ APP_CONFIG = {
 }
 ```
 
+### TTS 输出模式
+
+本 Fork 提供两种可切换的语音输出方式：
+
+- `native_xiaomi`：服务端下发回答文字，由音箱内置 `mibrain text_to_speech`
+  生成原生小爱音色，再通过 `miplayer` 播放。该模式采用首段立即播放、后续分段预生成，
+  并在播放完成后自动清理临时文件。
+- `sherpa`：保留 Sherpa-ONNX 服务端生成 PCM/Opus 音频并流式传输到音箱的方式。
+
+Docker 部署时，`XIAOZHI_TTS_OUTPUT_MODE` 环境变量的优先级高于 `config.py`。
+Windows MINI 的现有部署可以使用脚本同时切换桥接端和小智后端：
+
+```powershell
+cd C:\path\to\open-xiaoai\deploy\xiaozhi
+
+# 使用小爱原生音色
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\switch-output-mode.ps1 native_xiaomi
+
+# 切回 Sherpa-ONNX
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\switch-output-mode.ps1 sherpa
+```
+
+如果 `xiaozhi-server` 不在脚本默认的相邻目录，可通过 `-ServerDir` 指定路径。
+完整部署结构、工作原理和调优参数见 [TTS 输出模式说明](../../deploy/sherpa-tts/README.md)。
+
 ### Docker 运行
 
 [![Docker Image Version](https://img.shields.io/docker/v/idootop/open-xiaoai-xiaozhi?color=%23086DCD&label=docker%20image)](https://hub.docker.com/r/idootop/open-xiaoai-xiaozhi)
 
 推荐使用以下命令，直接 Docker 一键运行。
+
+> [!NOTE]
+> 上游公开镜像不包含本 Fork 新增的 `native_xiaomi` 模式。使用该模式时请从本仓库构建镜像，
+> 或使用 `deploy/xiaozhi/docker-compose.yml` 中的本地镜像部署配置。
 
 ```shell
 docker run -it --rm -p 4399:4399 -v $(pwd)/config.py:/app/config.py idootop/open-xiaoai-xiaozhi:latest

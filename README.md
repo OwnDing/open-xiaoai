@@ -1,5 +1,6 @@
-> [!WARNING]
-> 本项目已停止维护，不再提供更新与支持，感谢大家的使用。
+> [!NOTE]
+> **维护状态：活跃更新中。** 本 Fork 正在实际环境中持续使用和优化，
+> 当前重点维护小智 AI 接入、语音链路稳定性，以及小爱音箱原生音色输出。
 
 # Open-XiaoAI
 
@@ -21,11 +22,23 @@
 
 在上一个 [MiGPT](https://github.com/idootop/mi-gpt) 项目中，我们已经实现将 ChatGPT 接入到小爱音箱。
 
-这一次 [Open-XiaoAI](https://github.com/idootop/open-xiaoai) 再次进化，直接接管小爱音箱的“耳朵”和“嘴巴”，
+这一次 [Open-XiaoAI](https://github.com/OwnDing/open-xiaoai) 再次进化，直接接管小爱音箱的“耳朵”和“嘴巴”，
 
 通过多模态大模型和 AI Agent，将小爱音箱的潜力完全释放，解锁无限可能。
 
 **未来由你定义!**
+
+## 本 Fork 新增与优化
+
+- **小爱原生音色输出**：新增 `native_xiaomi` 模式。大模型回答以文字发送到音箱，
+  再由音箱内置的 `mibrain text_to_speech` 合成并通过 `miplayer` 播放，音色与小爱原生回复一致。
+- **两种 TTS 模式自由切换**：可以在 `native_xiaomi` 与原有 `sherpa` 服务端流式语音之间切换，
+  无需重新修改程序。
+- **更流畅的长回答**：首段优先播放、后续文本自动合并与预生成，降低首句等待和句间停顿。
+- **更稳定的音频链路**：优化播放缓冲、WebSocket 自动重连和中途打断处理。
+- **存储空间保护**：原生 TTS 临时音频播放后自动删除，并设置单文件与总缓存上限。
+
+相关部署、切换和调优方法请参阅 [TTS 输出模式说明](deploy/sherpa-tts/README.md)。
 
 ## 你的声音 + 小爱音箱 = 无限可能
 
@@ -52,6 +65,7 @@
 2. 在小爱音箱上安装运行 Client 端补丁程序 👉 [教程](packages/client-rust/README.md)
 3. 运行以下演示程序，体验小爱音箱的全新能力 ✨
    - 👉 [小爱音箱接入小智 AI](examples/xiaozhi/README.md)
+   - 👉 [小爱原生音色与 Sherpa-ONNX TTS 切换](deploy/sherpa-tts/README.md)
    - 👉 [小爱音箱自定义唤醒词](examples/kws/README.md)
    - 👉 [小爱音箱接入 MiGPT（完美版）](examples/migpt/README.md)
    - 👉 [小爱音箱接入 Gemini Live API](examples/gemini/README.md)
