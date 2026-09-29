@@ -1,6 +1,7 @@
 import asyncio
 import json
 import math
+import re
 import shlex
 import uuid
 from dataclasses import dataclass
@@ -60,6 +61,13 @@ class NativeXiaomiTTS:
 
     _BOUNDARIES = "。！？!?；;，,\n"
     _FILE_PREFIX = "/tmp/open-xiaoai-native-tts-"
+    # Xiaomi's cloud TTS refuses text it deems sensitive (Chinese national
+    # leaders by name or title, territorial disputes...) and returns a canned
+    # "内含敏感信息" clip of this exact size instead of the speech.
+    _REFUSAL_BYTES = 5328
+    # Below this many spoken units a real sentence can also be ~5328 bytes.
+    _REFUSAL_MIN_UNITS = 9
+    _SENTENCE_END = re.compile(r"(?<=[。！？!?；;\n])")
 
     def __init__(self, speaker, settings=None):
         self.speaker = speaker
@@ -194,7 +202,11 @@ class NativeXiaomiTTS:
 
                 try:
                     audio_path = await self._generate_audio(text, token)
-                    await self._audio_queue.put((audio_path, text))
+                    if self._is_refusal(text, audio_path):
+                        await self._delete_audio_file(audio_path)
+                        await self._queue_sentences(text, token)
+                    else:
+                        await self._audio_queue.put((audio_path, text))
                 except Exception as error:
                     self._error = str(error)
                     print(f"❌ 原生小爱 TTS 合成失败: {error}")
@@ -202,6 +214,43 @@ class NativeXiaomiTTS:
                     return
         except asyncio.CancelledError:
             raise
+
+    @staticmethod
+    def _spoken_units(text):
+        """CJK characters plus Latin words/numbers: roughly 0.2 s of speech each."""
+        return len(re.findall(r"[\u4e00-\u9fff]", text)) + len(
+            re.findall(r"[A-Za-z0-9]+", text)
+        )
+
+    def _is_refusal(self, text, audio_path):
+        units = self._spoken_units(text)
+        if units < self._REFUSAL_MIN_UNITS:
+            return False
+        size_bytes = self._generated_sizes.get(audio_path, 0)
+        if size_bytes == self._REFUSAL_BYTES:
+            return True
+        # Far shorter than any real reading of this text (~0.2 s per unit).
+        return size_bytes * 8 / 32000 < units * 0.1
+
+    async def _queue_sentences(self, text, token):
+        """Re-synthesize a refused segment sentence by sentence, skipping
+        only the sentences Xiaomi still refuses."""
+        sentences = [part.strip() for part in self._SENTENCE_END.split(text)]
+        sentences = [part for part in sentences if part]
+        if len(sentences) <= 1:
+            print(f"⚠️ 原生小爱 TTS 拒绝朗读，已跳过: {text[:40]}")
+            return
+        print(
+            f"⚠️ 原生小爱 TTS 拒绝朗读整段，改为逐句合成: "
+            f"chars={len(text)} sentences={len(sentences)}"
+        )
+        for sentence in sentences:
+            audio_path = await self._generate_audio(sentence, token)
+            if self._is_refusal(sentence, audio_path):
+                await self._delete_audio_file(audio_path)
+                print(f"⚠️ 原生小爱 TTS 拒绝朗读，已跳过: {sentence[:40]}")
+                continue
+            await self._audio_queue.put((audio_path, sentence))
 
     async def _playback_worker(self, token):
         playback_failed = False

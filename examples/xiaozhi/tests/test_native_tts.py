@@ -12,8 +12,11 @@ from xiaozhi.services.native_tts import (
 
 
 class FakeSpeaker:
-    def __init__(self, block_playback=False, playback_exit_code=0):
+    def __init__(self, block_playback=False, playback_exit_code=0, refused=(), sizes=None):
         self.block_playback = block_playback
+        # Texts containing any of these get Xiaomi's canned refusal clip.
+        self.refused = refused
+        self.sizes = sizes or {}
         self.playback_exit_code = playback_exit_code
         self.play_started = asyncio.Event()
         self.release_playback = asyncio.Event()
@@ -35,7 +38,12 @@ class FakeSpeaker:
             )
 
         if script.startswith("busybox mv"):
-            return SimpleNamespace(stdout="16000\n", stderr="", exit_code=0)
+            text = self.generated_texts[-1]
+            if any(word in text for word in self.refused):
+                size = NativeXiaomiTTS._REFUSAL_BYTES
+            else:
+                size = self.sizes.get(text, 16000)
+            return SimpleNamespace(stdout=f"{size}\n", stderr="", exit_code=0)
 
         if "miplayer -f" in script:
             self.played_paths.append(shlex.split(script)[-1])
@@ -126,6 +134,55 @@ class NativeXiaomiTTSTests(unittest.IsolatedAsyncioTestCase):
             any(command.startswith("busybox timeout") for command in speaker.commands)
         )
         self.assertTrue(any("killall miplayer" in item for item in speaker.commands))
+
+    async def test_refused_segment_is_retried_sentence_by_sentence(self):
+        speaker = FakeSpeaker(refused=("国家主席",))
+        pipeline = NativeXiaomiTTS(
+            speaker, self.settings(target_chars=200, max_chars=300)
+        )
+        news = "今天有三条新闻值得一听。国家主席出席了一场重要会议。科技公司发布了新款手机。"
+
+        await pipeline.start("session-1")
+        await pipeline.add_text("我查一下。")
+        await pipeline.add_text(news)
+        completed = await asyncio.wait_for(pipeline.finish(), timeout=1)
+
+        self.assertTrue(completed)
+        self.assertEqual(
+            speaker.generated_texts,
+            [
+                "我查一下。",
+                news,
+                "今天有三条新闻值得一听。",
+                "国家主席出席了一场重要会议。",
+                "科技公司发布了新款手机。",
+            ],
+        )
+        self.assertEqual(len(speaker.played_paths), 3)
+
+    async def test_short_reply_with_refusal_size_still_plays(self):
+        speaker = FakeSpeaker(sizes={"好了，灯关了。": NativeXiaomiTTS._REFUSAL_BYTES})
+        pipeline = NativeXiaomiTTS(speaker, self.settings())
+
+        await pipeline.start("session-1")
+        await pipeline.add_text("好了，灯关了。")
+        completed = await asyncio.wait_for(pipeline.finish(), timeout=1)
+
+        self.assertTrue(completed)
+        self.assertEqual(speaker.generated_texts, ["好了，灯关了。"])
+        self.assertEqual(len(speaker.played_paths), 1)
+
+    async def test_refused_single_sentence_is_skipped(self):
+        speaker = FakeSpeaker(refused=("国家主席",))
+        pipeline = NativeXiaomiTTS(speaker, self.settings())
+
+        await pipeline.start("session-1")
+        await pipeline.add_text("国家主席出席了一场重要会议。")
+        completed = await asyncio.wait_for(pipeline.finish(), timeout=1)
+
+        self.assertTrue(completed)
+        self.assertEqual(speaker.generated_texts, ["国家主席出席了一场重要会议。"])
+        self.assertEqual(speaker.played_paths, [])
 
     def test_output_mode_validation(self):
         self.assertEqual(
