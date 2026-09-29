@@ -27,7 +27,14 @@ logger = setup_logging()
 DEVICE_WORDS = re.compile(
     r"灯|风扇|空调|窗帘|电视|插座|开关|加湿器|除湿|净化器|扫地|热水器|暖气|地暖|门锁|晾衣"
 )
-ACTION_WORDS = re.compile(r"开|关|调|设|启动|停|暂停|亮|暗|升|降|切换|模式")
+# Explicit command phrasing only: a bare 开/关 also appears in questions such as
+# "空调应该开多少度" or "灯开着吗", which must be answered, not forced into a tool.
+COMMAND_WORDS = re.compile(
+    r"打开|关闭|关掉|关上|关了|开开|开启|启动|停止|暂停|开一下|关一下|开下|关下"
+    r"|调到|调成|调为|调高|调低|调亮|调暗|调大|调小|设为|设成|设置|切换|升起|降下"
+    r"|把.{0,10}?(开|关|调|设)"
+    r"|(开|关)(灯|风扇|空调|电视|窗帘|插座)"
+)
 RETRY_NOTE = (
     "（系统提示：这是设备控制请求，但你上一次没有调用任何工具就回答了。"
     "现在必须调用 ha_call_service 真正执行，需要确认状态时调用 ha_get_state，"
@@ -50,7 +57,7 @@ def _message_text(message):
 
 
 def is_control_request(text):
-    return bool(DEVICE_WORDS.search(text) and ACTION_WORDS.search(text))
+    return bool(DEVICE_WORDS.search(text) and COMMAND_WORDS.search(text))
 
 
 class LLMProvider(LLMProviderBase):

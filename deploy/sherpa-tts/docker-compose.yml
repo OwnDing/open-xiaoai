@@ -16,6 +16,8 @@ services:
     volumes:
       - ./data:/opt/xiaozhi-esp32-server/data
       - ./models/SenseVoiceSmall/model.pt:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt
+      # SenseVoiceSmall int8 for the sherpa-onnx ASR (switch-asr.ps1 sherpa).
+      - ./models/sherpa-onnx-sense-voice:/opt/xiaozhi-esp32-server/models/sherpa-onnx-sense-voice
       # Hermes LLM provider with the device-control tool guard (type: hermes).
       - ../open-xiaoai/deploy/hermes/xiaozhi-provider/hermes.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/hermes.py:ro
     depends_on:
