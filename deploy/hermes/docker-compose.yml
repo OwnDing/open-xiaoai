@@ -1,0 +1,35 @@
+services:
+  hermes:
+    image: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}
+    container_name: hermes
+    restart: unless-stopped
+    # A dedicated Hermes home (own volume) per deployment: the default
+    # profile of this container *is* the xiaoqi-home voice profile.
+    command: ["gateway", "run"]
+    env_file: .env
+    environment:
+      TZ: Asia/Shanghai
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+      API_SERVER_MODEL_NAME: xiaoqi-home
+    # Xiaozhi reaches Hermes over the Docker network; the host port is only
+    # for local curl checks, so keep it off the LAN.
+    ports:
+      - "127.0.0.1:8642:8642"
+    volumes:
+      - hermes-data:/opt/data
+      - ./profile:/seed/profile:ro
+    networks:
+      - default
+      - xiaozhi
+
+volumes:
+  hermes-data:
+    external: true
+
+networks:
+  # xiaozhi-esp32-server reaches Hermes at http://hermes:8642/v1
+  xiaozhi:
+    external: true
+    name: xiaozhi-server_default

@@ -1,0 +1,104 @@
+# Hermes Agent for Xiaozhi (xiaoqi-home)
+
+Hermes Agent sits between `xiaozhi-esp32-server` and DeepSeek as an
+OpenAI-compatible endpoint, adding memory, skills, web search, Home Assistant
+and cron without touching the Open-XiaoAI voice path.
+
+```text
+小爱音箱 → Open-XiaoAI bridge → xiaozhi-esp32-server ──http://hermes:8642/v1──▶ Hermes ──▶ DeepSeek (deepseek-flash)
+```
+
+Latency results and the POC evaluation are in
+[`docs/xiaoai-xiaozhi-hermes-latency-report.md`](../../docs/xiaoai-xiaozhi-hermes-latency-report.md).
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `docker-compose.yml` | Hermes gateway (`hermes` container, volume `hermes-data`), joined to `xiaozhi-server_default` |
+| `.env.example` | Keys: `API_SERVER_KEY`, `DEEPSEEK_API_KEY`, `TAVILY_API_KEY`, `HASS_URL`, `HASS_TOKEN` |
+| `profile/` | The voice profile: `config.yaml`, `SOUL.md` (persona + device table), `skills/` (sleep-mode) |
+| `switch-llm.ps1`, `switch_llm.py` | Switch xiaozhi-server between `hermes` and direct `deepseek` (backs up `.config.yaml` first) |
+| `demo-ha/` | Virtual Home Assistant used for the POC (lights, bedroom AC, sensors) |
+| `bench/` | Latency harness and the raw results of the POC |
+
+## Deploy (Windows MINI, PowerShell)
+
+The container is dedicated to the speaker, so the default Hermes home inside
+the `hermes-data` volume *is* the `xiaoqi-home` profile (Hermes allows only one
+gateway per home, so a named profile would need multiplexing).
+
+```powershell
+cd C:\Users\djcmy\Documents\develop\ai\open-xiaoai\deploy\hermes
+copy .env.example .env     # then fill in the keys
+docker volume create hermes-data
+docker compose run --rm --entrypoint sh hermes /seed/profile/install.sh
+docker compose up -d
+curl http://127.0.0.1:8642/health
+```
+
+Re-run the `install.sh` line after editing anything under `profile/`
+(`SOUL.md` changes apply to the next request; `config.yaml` changes need
+`docker restart hermes`).
+
+Docker Hub pulls fail over SSH on this machine (Windows credential helper).
+Pull from an interactive desktop session, or pull elsewhere and stream it in:
+
+```sh
+crane pull --platform linux/amd64 nousresearch/hermes-agent:<tag> hermes.tar
+ssh djcmy@192.168.5.10 'docker load' < hermes.tar
+```
+
+## Switch Xiaozhi's brain
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\switch-llm.ps1 hermes     # via Hermes
+powershell -ExecutionPolicy Bypass -File .\switch-llm.ps1 deepseek   # direct DeepSeek
+```
+
+Both LLM entries stay in `data/.config.yaml`; only `selected_module.LLM`
+changes and xiaozhi-server is restarted (about 30 s without the speaker).
+
+## Profile choices that matter for latency
+
+- `agent.reasoning_effort: none` — Hermes turns DeepSeek thinking **on** for
+  `deepseek-flash` by default.
+- Only `memory, session_search, skills, web, homeassistant, cronjob` are
+  enabled for the API server; terminal/file/browser/code/delegation are off.
+- Bundled skills are not seeded (`.no-bundled-skills`), keeping the skill
+  index in the prompt short.
+- `SOUL.md` lists Home Assistant entity ids so a command needs one tool round
+  instead of list-then-call (light switches ~0.65 s sooner). Update the table
+  when real devices are added.
+- `SOUL.md` asks for a short “我查一下。” before web search so the speaker is
+  not silent while searching, and forbids any text before device/memory tools.
+
+## Demo Home Assistant
+
+```powershell
+cd demo-ha
+docker compose up -d
+docker run --rm --network xiaozhi-server_default -v ${PWD}\..:/hermes `
+  --entrypoint /app/.venv/bin/python local/open-xiaoai-xiaozhi:smooth-audio `
+  /hermes/demo-ha/onboard.py      # creates the owner + writes HASS_URL/HASS_TOKEN into ..\.env
+```
+
+To use a real Home Assistant instead, put its URL and a long-lived token in
+`.env`, update the device table in `profile/SOUL.md`, re-run `install.sh` and
+`docker compose up -d`.
+
+## Benchmarks
+
+See `bench/`. Everything runs inside the bridge image on the MINI:
+
+```powershell
+$run = "docker run --rm --network xiaozhi-server_default --env-file ..\.env -v ${PWD}:/bench -w /bench --entrypoint"
+# LLM-level A/B (direct DeepSeek vs Hermes, interleaved)
+iex "$run sh local/open-xiaoai-xiaozhi:smooth-audio ab_llm.sh"
+# Voice pipeline through xiaozhi-server (fake device, real ASR); label, rounds
+iex "$run sh local/open-xiaoai-xiaozhi:smooth-audio ab_voice.sh hermes 3"
+# Device-control latency against the demo HA
+iex "$run sh local/open-xiaoai-xiaozhi:smooth-audio ha_case.sh hermes 5"
+```
+
+Test utterances are generated on macOS with `bench/make_audio.sh`.

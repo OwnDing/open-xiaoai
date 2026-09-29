@@ -1,0 +1,88 @@
+# Demo home for the Hermes POC: virtual devices only, no real hardware.
+homeassistant:
+  name: 小七之家
+  time_zone: Asia/Shanghai
+  country: CN
+  language: zh-Hans
+  unit_system: metric
+
+logger:
+  default: warning
+
+input_boolean:
+  living_room_light_state:
+    name: 客厅灯状态
+  study_light_state:
+    name: 书房灯状态
+  bedroom_light_state:
+    name: 卧室灯状态
+  bedroom_ac_power:
+    name: 卧室空调电源
+  bedroom_window_open:
+    name: 卧室窗户开启
+
+template:
+  - light:
+      - name: 客厅灯
+        unique_id: demo_living_room_light
+        state: "{{ is_state('input_boolean.living_room_light_state', 'on') }}"
+        turn_on:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.living_room_light_state
+        turn_off:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.living_room_light_state
+      - name: 书房灯
+        unique_id: demo_study_light
+        state: "{{ is_state('input_boolean.study_light_state', 'on') }}"
+        turn_on:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.study_light_state
+        turn_off:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.study_light_state
+      - name: 卧室灯
+        unique_id: demo_bedroom_light
+        state: "{{ is_state('input_boolean.bedroom_light_state', 'on') }}"
+        turn_on:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.bedroom_light_state
+        turn_off:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.bedroom_light_state
+  - sensor:
+      - name: 卧室温度
+        unique_id: demo_bedroom_temperature
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        state: "27.5"
+      - name: 卧室湿度
+        unique_id: demo_bedroom_humidity
+        unit_of_measurement: "%"
+        device_class: humidity
+        state_class: measurement
+        state: "56"
+  - binary_sensor:
+      - name: 卧室窗户
+        unique_id: demo_bedroom_window
+        device_class: window
+        state: "{{ is_state('input_boolean.bedroom_window_open', 'on') }}"
+
+climate:
+  - platform: generic_thermostat
+    name: 卧室空调
+    unique_id: demo_bedroom_ac
+    heater: input_boolean.bedroom_ac_power
+    target_sensor: sensor.wo_shi_wen_du
+    ac_mode: true
+    min_temp: 16
+    max_temp: 30
+    target_temp: 26
+    initial_hvac_mode: cool

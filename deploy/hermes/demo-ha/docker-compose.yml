@@ -1,0 +1,25 @@
+# Virtual Home Assistant used to test Hermes' homeassistant tools.
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant-demo
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./config/configuration.yaml:/config/configuration.yaml:ro
+      - ha-demo-data:/config/.storage
+    networks:
+      xiaozhi:
+        aliases:
+          - homeassistant
+
+volumes:
+  ha-demo-data:
+
+networks:
+  xiaozhi:
+    external: true
+    name: xiaozhi-server_default

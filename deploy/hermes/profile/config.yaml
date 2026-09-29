@@ -1,0 +1,37 @@
+# Hermes profile "xiaoqi-home": the voice brain behind Xiaozhi.
+# Copied to /opt/data/profiles/xiaoqi-home/config.yaml by setup.sh.
+
+model:
+  provider: deepseek
+  default: deepseek-flash
+
+agent:
+  # Voice replies must start fast: never let DeepSeek think first.
+  reasoning_effort: none
+  # A household request should never need a long tool loop.
+  max_turns: 8
+  api_max_retries: 1
+
+# Only the tools the speaker needs. Everything else (terminal, files, browser,
+# code execution, delegation, computer use...) stays off for safety and to keep
+# the tool schema short.
+platform_toolsets:
+  api_server:
+    - memory
+    - session_search
+    - skills
+    - web
+    - homeassistant
+    - cronjob
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+
+skills:
+  # The speaker should not spontaneously author skills mid-conversation.
+  creation_nudge_interval: 0
+
+display:
+  # Voice has no UI for tool-progress commentary.
+  interim_assistant_messages: false
