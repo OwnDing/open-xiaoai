@@ -1,0 +1,29 @@
+# Home Assistant for the speaker: Mijia devices via the official
+# Xiaomi Home integration, controlled by Hermes (xiaoqi-home).
+services:
+  homeassistant:
+    image: ${HA_IMAGE:-ghcr.io/home-assistant/home-assistant:stable}
+    container_name: homeassistant
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "8123:8123"
+    volumes:
+      # Named volume: HA's SQLite recorder is unreliable on Windows bind mounts.
+      - homeassistant-config:/config
+      - ./scripts:/opt/xiaoqi-scripts:ro
+    networks:
+      xiaozhi:
+        # Hermes reaches HA at http://homeassistant:8123
+        aliases:
+          - homeassistant
+
+volumes:
+  homeassistant-config:
+    name: homeassistant-config
+
+networks:
+  xiaozhi:
+    external: true
+    name: xiaozhi-server_default
