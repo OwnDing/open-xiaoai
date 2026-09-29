@@ -15,6 +15,10 @@ from xiaozhi.services.protocols.typing import AbortReason, DeviceState, Listenin
 from xiaozhi.utils.base import get_env
 
 
+def get_vad_setting(key, default):
+    return APP_CONFIG.get("vad", {}).get(key, default)
+
+
 class Step:
     idle = "idle"
     on_interrupt = "on_interrupt"
@@ -23,6 +27,7 @@ class Step:
     on_tts_end = "on_tts_end"
     on_speech = "on_speech"
     on_silence = "on_silence"
+    on_stt = "on_stt"
 
 
 class __EventManager:
@@ -154,6 +159,10 @@ class __EventManager:
         """检测到静音（说话结束）"""
         self.update_step(Step.on_silence)
 
+    def on_stt(self):
+        """服务端识别出了用户说的话"""
+        self.update_step(Step.on_stt)
+
     def _on_session_done(self, future):
         with self.state_lock:
             if self.session_future is future:
@@ -208,11 +217,11 @@ class __EventManager:
         if trigger_step == Step.on_interrupt:
             return
 
-        # 等待 TTS 余音结束
+        # 只留一小段时间避开音箱自己的余音，然后马上开始听。
+        # 以前要先等到 0.5s 安静才开始听，用户一接话就会被丢掉。
         if trigger_step == Step.on_tts_end:
-            vad.resume("silence")
-            step, _ = await self.wait_next_step(session_id)
-            if step != Step.on_silence:
+            await asyncio.sleep(get_vad_setting("tts_end_guard_ms", 300) / 1000)
+            if not self._is_current_session(session_id):
                 return
 
         # 检查是否有人说话
@@ -247,6 +256,20 @@ class __EventManager:
         # 停止说话
         await xiaozhi.protocol.send_stop_listening()
         xiaozhi.set_device_state(DeviceState.IDLE)
+
+        # 服务端没识别出内容时不会回复，也就不会再触发 TTS 结束。
+        # 不要一直干等：提示用户重说，然后重新开始听。
+        step, _ = await self.wait_next_step(
+            session_id, timeout=get_vad_setting("no_reply_timeout", 5)
+        )
+        if step != "timeout":
+            return
+        print("🤷 没有识别到用户说的内容，提示重说")
+        prompt = get_vad_setting("no_reply_prompt", "我没听清，再说一遍？")
+        if prompt:
+            await speaker.play(text=prompt)
+        if self._is_current_session(session_id):
+            self._begin_session(Step.on_tts_end)
 
     async def wakeup(self, text, source):
         before_wakeup = APP_CONFIG["wakeup"]["before_wakeup"]

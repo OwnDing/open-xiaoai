@@ -344,6 +344,7 @@ class XiaoZhi:
         text = data.get("text", "")
         if text:
             print(f"💬 我说：{text}")
+            EventManager.on_stt()
             self.schedule(lambda: self.set_chat_message("user", text))
 
     def _handle_llm_message(self, data):

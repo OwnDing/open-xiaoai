@@ -29,12 +29,19 @@ class _VAD:
         self.threshold = config.get("threshold", 0.01)
         self.min_speech_duration = config.get("min_speech_duration", 250)
         self.min_silence_duration = config.get("min_silence_duration", 500)
+        # A very short utterance ("啊", "嗯"...) is usually followed by the real
+        # sentence after a pause, so it needs a longer silence before the turn
+        # ends. Normal-length speech keeps min_silence_duration.
+        self.short_utterance_duration = config.get("short_utterance_duration", 800)
+        self.short_utterance_silence = config.get("short_utterance_silence", 1000)
 
         # 状态变量
         self.paused = True
         self.thread = None
         self.speech_count = 0
         self.silence_count = 0
+        # Speech heard while waiting for the end of the current utterance.
+        self.voiced_count = 0
 
         self.audio = None
         self.stream = None
@@ -48,6 +55,7 @@ class _VAD:
         """重置状态"""
         self.speech_count = 0
         self.silence_count = 0
+        self.voiced_count = 0
         self.speech_frames = []
         self.silence_frames = []
 
@@ -79,12 +87,15 @@ class _VAD:
 
         self.paused = False
         self.target = target
+        self.voiced_count = 0
         self.stream.start_stream()
 
     def _handle_speech_frame(self, frames):
         """处理语音帧"""
         self.speech_count += frame_sample_count(frames)
         self.silence_count = 0
+        if self.target == "silence":
+            self.voiced_count += frame_sample_count(frames)
 
         if self.target == "speech":
             if not self.speech_frames:
@@ -122,10 +133,18 @@ class _VAD:
 
         if (
             self.target == "silence"
-            and self.silence_count > self.min_silence_duration * self.sample_rate / 1000
+            and self.silence_count > self.required_silence() * self.sample_rate / 1000
         ):
             self.pause()
             EventManager.on_silence()
+
+    def required_silence(self):
+        """Silence (ms) that ends the current utterance."""
+        # on_speech fired after min_speech_duration of speech, so count it too.
+        voiced_ms = self.min_speech_duration + self.voiced_count * 1000 / self.sample_rate
+        if voiced_ms < self.short_utterance_duration:
+            return max(self.min_silence_duration, self.short_utterance_silence)
+        return self.min_silence_duration
 
     def _initialize_audio_stream(self):
         """初始化独立的音频流"""

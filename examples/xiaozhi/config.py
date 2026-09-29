@@ -59,6 +59,15 @@ APP_CONFIG = {
         "min_speech_duration": 250,
         # 最小静默时长（ms）
         "min_silence_duration": 500,
+        # 只说了很短一句（如“啊”“嗯”）时，多等一会儿再判定说完，
+        # 这样“啊……国庆不是八天”不会被截成“啊”。
+        "short_utterance_duration": 800,
+        "short_utterance_silence": 1000,
+        # 小七说完后只留这段时间避开余音，然后马上开始听（ms）
+        "tts_end_guard_ms": 300,
+        # 说完后服务端多久没有识别结果，就提示重说并重新开始听（秒）
+        "no_reply_timeout": 5,
+        "no_reply_prompt": "我没听清，再说一遍？",
     },
     "tts_output": {
         # 可选："sherpa"（服务端音频流）或 "native_xiaomi"（音箱原生音色）
