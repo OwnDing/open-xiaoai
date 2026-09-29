@@ -1,6 +1,7 @@
 > [!NOTE]
 > **维护状态：活跃更新中。** 本 Fork 正在实际环境中持续使用和优化，
-> 当前重点维护小智 AI 接入、语音链路稳定性，以及小爱音箱原生音色输出。
+> 当前重点维护小智 AI 接入、语音链路稳定性、小爱音箱原生音色输出，
+> 以及通过 Hermes Agent 为音箱增加记忆、联网搜索和智能家居控制。
 
 # Open-XiaoAI
 
@@ -40,6 +41,30 @@
 
 相关部署、切换和调优方法请参阅 [TTS 输出模式说明](deploy/sherpa-tts/README.md)。
 
+### Hermes Agent：从聊天音箱到家庭 AI 助理
+
+在小智服务端与 DeepSeek 之间接入 [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+（OpenAI 兼容接口）。小智继续负责唤醒、VAD、ASR 和 TTS，Hermes 负责“思考和行动”，
+语音链路无需改动：
+
+```text
+小爱音箱 → Open-XiaoAI → 小智服务端 → Hermes Agent → DeepSeek Flash
+                                          ├─ 长期记忆 / Skills
+                                          ├─ 联网搜索（Tavily）
+                                          └─ Home Assistant 智能家居
+```
+
+- **真的能做事**：说“把客厅灯关掉”，灯会真正关闭，然后回复“好了”，不再是嘴上答应。
+- **联网查新闻**：先说一句“我查一下”，再播报搜索摘要，查询期间不会冷场。
+- **跨会话记忆**：记住用户偏好和聊过的事情，下次唤醒依然记得。
+- **Skills**：例如“我睡觉了”会一次完成关灯、按记忆里的偏好设置空调、检查窗户。
+- **一键切换**：`switch-llm.ps1 hermes|deepseek` 在 Hermes 与直连 DeepSeek 之间切换，
+  切换前自动备份配置。
+
+实测：Hermes 对普通聊天只增加约 0.1 秒延迟。从说完话到灯灭约 2 秒，
+新闻约 2.2 秒开始回应。部署方法见 [Hermes 部署说明](deploy/hermes/README.md)，
+完整测试数据见 [接入与延迟测试报告](docs/xiaoai-xiaozhi-hermes-latency-report.md)。
+
 ## 你的声音 + 小爱音箱 = 无限可能
 
 👉 [小爱音箱接入小智 AI 演示视频](https://www.bilibili.com/video/BV1TxJhzvEhz)
@@ -66,6 +91,7 @@
 3. 运行以下演示程序，体验小爱音箱的全新能力 ✨
    - 👉 [小爱音箱接入小智 AI](examples/xiaozhi/README.md)
    - 👉 [小爱原生音色与 Sherpa-ONNX TTS 切换](deploy/sherpa-tts/README.md)
+   - 👉 [接入 Hermes Agent：记忆、联网搜索与智能家居](deploy/hermes/README.md)
    - 👉 [小爱音箱自定义唤醒词](examples/kws/README.md)
    - 👉 [小爱音箱接入 MiGPT（完美版）](examples/migpt/README.md)
    - 👉 [小爱音箱接入 Gemini Live API](examples/gemini/README.md)
