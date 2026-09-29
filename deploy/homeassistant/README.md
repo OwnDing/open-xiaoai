@@ -36,6 +36,36 @@ docker restart homeassistant
 
 升级集成时也用同样的命令。集成需要的依赖（construct、paho-mqtt、numpy、cryptography、psutil）HA 镜像里已经自带。
 
+每次安装或升级集成后，都要再打一次本地补丁：
+
+```powershell
+docker exec homeassistant python3 /opt/xiaoqi-scripts/patch_xiaomi_home.py
+docker restart homeassistant
+```
+
+这个补丁修复的是 v0.5.0 在 Python 3.14 下的问题：米家云报告设备离线时，集成会抛出 `TypeError: a coroutine was expected, got None`，HA 返回 500，而不是正常的“设备离线”错误。
+
+## 排查“说了没反应”
+
+书房灯、主卧灯、次卧灯这类设备，是由音箱（`parent` 为音箱的 did）作为网关转发命令的，流程如下：
+
+1. 米家云收到命令，返回 `code: 1`，意思只是“已受理”；
+2. 灯真正执行后，会推送 `properties_changed`；
+3. 如果音箱没有把命令转发到灯，HA 仍然会显示新状态，但灯实际上没有变化。
+
+排查方法：
+
+1. 打开 Xiaomi Home 的调试日志：`logger.set_level` → `custom_components.xiaomi_home: debug`。HA 重启后需要重新设置。
+2. 复现问题。
+3. 核对每条命令有没有收到设备的确认：
+
+   ```powershell
+   docker logs --tail 2000 homeassistant > ha.log 2>&1
+   python ..\hermes\bench\ha_confirmations.py ha.log 21:30
+   ```
+
+   输出里的 `NO CONFIRM` 就是命令发出了、但设备没有确认执行的那一次。
+
 ## 登录米家
 
 小米登录完成后，固定跳转回 `http://homeassistant.local:8123`，浏览器必须能把这个名字解析到 HA。mini PC 的 hosts 文件里已经加了：

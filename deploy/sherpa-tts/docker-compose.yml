@@ -16,6 +16,8 @@ services:
     volumes:
       - ./data:/opt/xiaozhi-esp32-server/data
       - ./models/SenseVoiceSmall/model.pt:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt
+      # Hermes LLM provider with the device-control tool guard (type: hermes).
+      - ../open-xiaoai/deploy/hermes/xiaozhi-provider/hermes.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/hermes.py:ro
     depends_on:
       sherpa-tts:
         condition: service_healthy

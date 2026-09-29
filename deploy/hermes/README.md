@@ -60,6 +60,30 @@ powershell -ExecutionPolicy Bypass -File .\switch-llm.ps1 deepseek   # direct De
 Both LLM entries stay in `data/.config.yaml`; only `selected_module.LLM`
 changes and xiaozhi-server is restarted (about 30 s without the speaker).
 
+### Xiaozhi-side provider with a tool-call guard
+
+The Hermes entry uses `type: hermes`, i.e. [`xiaozhi-provider/hermes.py`](xiaozhi-provider/hermes.py),
+mounted into the server by its compose file:
+
+```yaml
+      - ../open-xiaoai/deploy/hermes/xiaozhi-provider/hermes.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/hermes.py:ro
+```
+
+xiaozhi sends the dialogue as plain text, so earlier turns look like the
+assistant switched devices without any tool call, and `deepseek-flash`
+(non-thinking) sometimes copies that: in a multi-turn test it answered
+“好了，次卧灯关了” without calling Home Assistant in 2 of 8 turns, despite the
+rules in `SOUL.md`. For requests that mention a device and an action
+(开/关/调/设…), the provider holds the reply until Hermes reports a tool call
+(`event: hermes.tool.progress`, which precedes any text). A reply that ends
+without one is discarded — never spoken — and the request is retried once with
+an explicit reminder. Other requests stream through untouched. With the guard
+all 16 commands of that test reached the devices. Set `tool_guard: false` in
+the LLM entry to disable it; retries are logged as `设备控制请求未调用工具`.
+
+`bench/multiturn_text.py` replays such a conversation on one connection;
+`bench/tool_honesty.py` measures the same effect directly against Hermes.
+
 ## Profile choices that matter for latency
 
 - `agent.reasoning_effort: none` — Hermes turns DeepSeek thinking **on** for

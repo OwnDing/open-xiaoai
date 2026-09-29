@@ -54,7 +54,11 @@ def main():
             raise SystemExit(f"API_SERVER_KEY missing in {args.hermes_env}")
         direct = llm.get(DIRECT, {})
         llm[HERMES] = {
-            "type": "openai",
+            # xiaozhi-provider/hermes.py, mounted by the server compose file:
+            # streams from Hermes and retries device commands that answered
+            # without calling a tool.
+            "type": "hermes",
+            "tool_guard": True,
             "base_url": args.hermes_url,
             "model_name": "xiaoqi-home",
             "api_key": api_key,
