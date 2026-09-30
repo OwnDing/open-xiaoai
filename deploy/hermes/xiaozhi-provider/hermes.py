@@ -63,6 +63,21 @@ FILLER_RETRY_NOTE = (
     "（系统提示：你上一次只说了一句“我查一下”就结束了，没有真正查询。"
     "需要实时信息就直接调用 web_search 搜索后回答；不需要搜索就直接回答。）"
 )
+# Questions about a device's *current* state must be answered from Home
+# Assistant, not from chat history or memory ("按我这边记录……").
+STATE_SUBJECTS = re.compile(DEVICE_WORDS.pattern + r"|温度|湿度|漏水|水浸|窗户|门窗")
+STATE_ASK = re.compile(
+    r"开着|关着|亮着|灭着|开没开|关没关|是不是开|是不是关|有没有开|有没有关|几盏"
+    r"|哪些.{0,4}(开|亮)|状态|现在.{0,6}(温度|湿度|多少度)|漏水|几点.{0,6}(开|关)"
+    r"|什么时候.{0,6}(开|关)"
+)
+# Preferences are answered from memory ("我睡觉空调一般开几度").
+PREFERENCE_WORDS = re.compile(r"应该|习惯|一般|喜欢|平时|合适|最好|怎么设|设多少")
+STATE_RETRY_NOTE = (
+    "（系统提示：这是询问设备当前状态的问题，但你上一次没有查询就回答了。"
+    "聊天记录和记忆里的状态可能早已过时，现在必须调用 ha_get_state 或 ha_list_entities "
+    "查询后再回答。）"
+)
 RETRY_NOTE = (
     "（系统提示：这是设备控制请求，但你上一次没有调用任何工具就回答了。"
     "现在必须调用 ha_call_service 真正执行，需要确认状态时调用 ha_get_state，"
@@ -88,9 +103,37 @@ def is_control_request(text):
     return bool(DEVICE_WORDS.search(text) and COMMAND_WORDS.search(text))
 
 
+def is_state_question(text):
+    return bool(
+        STATE_SUBJECTS.search(text)
+        and STATE_ASK.search(text)
+        and not PREFERENCE_WORDS.search(text)
+        and not is_control_request(text)
+    )
+
+
 def _spoken(text):
     """Letters, digits and CJK only: drops punctuation, whitespace and emoji."""
     return re.sub(r"[\W_]", "", text)
+
+
+CJK = re.compile(r"[\u4e00-\u9fff]")
+LATIN_WORDS = re.compile(r"[A-Za-z]{2,}")
+
+
+def _drop_english_lead_in(text):
+    """Remove an English sentence before the first Chinese character.
+
+    Given tools, the model sometimes narrates first ("I'll check the lights.");
+    the speaker must not read that. Mixed Chinese sentences are kept.
+    """
+    first = CJK.search(text)
+    if not first:
+        return text
+    prefix = text[: first.start()].strip()
+    # A real sentence ends with punctuation; "Apple Watch S11 缺货" is kept.
+    is_sentence = len(LATIN_WORDS.findall(prefix)) >= 2 and prefix[-1:] in ".!?:"
+    return text[first.start():] if is_sentence else text
 
 
 def is_filler_only(text):
@@ -198,6 +241,9 @@ class LLMProvider(LLMProviderBase):
                 yield value
                 continue
             held += value
+            if not CJK.search(held) and LATIN_WORDS.search(held):
+                continue  # possibly an English lead-in; wait for Chinese or a tool
+            held = _drop_english_lead_in(held)
             waiting = False
             while True:
                 match = LEADING_FILLER.match(held)
@@ -233,7 +279,11 @@ class LLMProvider(LLMProviderBase):
         users = [m for m in dialogue if m.get("role") == "user"]
         request = _message_text(users[-1]) if users else ""
 
-        if not (self.tool_guard and is_control_request(request)):
+        if self.tool_guard and is_control_request(request):
+            required, note, reason = None, RETRY_NOTE, "设备控制请求未调用工具"
+        elif self.tool_guard and is_state_question(request):
+            required, note, reason = "ha_", STATE_RETRY_NOTE, "设备状态问题未查询"
+        else:
             state = {"spoken": False, "held": ""}
             yield from self._clean(self._with_search_filler(self._events(dialogue), state))
             if state["spoken"]:
@@ -248,14 +298,17 @@ class LLMProvider(LLMProviderBase):
                 yield self.search_failed_reply
             return
 
+        # Hold the reply until the required tool runs (any tool for commands,
+        # a Home Assistant tool for state questions); otherwise retry once.
         state = {"used_tool": False, "held": []}
 
         def guarded():
             for kind, value in self._events(dialogue):
                 if kind == "tool":
-                    if not state["used_tool"]:
+                    if not state["used_tool"] and (required is None or value.startswith(required)):
                         state["used_tool"] = True
-                        yield from state["held"]
+                        # Anything written before the tool is lead-in noise
+                        # ("我查一下", "I'll check the lights."): drop it.
                         state["held"] = []
                 elif state["used_tool"]:
                     yield value
@@ -267,10 +320,9 @@ class LLMProvider(LLMProviderBase):
             return
 
         held = state["held"]
-        logger.bind(tag=TAG).warning(
-            f"设备控制请求未调用工具，已丢弃回答并重试: {request} -> {''.join(held)[:60]}"
-        )
-        yield from self._clean(self._texts(self._with_note(dialogue, request, RETRY_NOTE)))
+        logger.bind(tag=TAG).warning(f"{reason}，已丢弃回答并重试: {request} -> {''.join(held)[:60]}")
+        retry = self._events(self._with_note(dialogue, request, note))
+        yield from self._clean(self._with_search_filler(retry, {"spoken": False, "held": ""}))
 
     @staticmethod
     def _with_note(dialogue, request, note):

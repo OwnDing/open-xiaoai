@@ -108,6 +108,59 @@ class ProviderTests(unittest.TestCase):
         )
         self.assertEqual(spoken, "三盏灯亮着。")
 
+    def test_state_question_answered_from_memory_is_retried(self):
+        spoken, requests = self.run_turn(
+            "现在有几盏灯开着？",
+            [("text", "按我这边记录，客厅灯和餐厅灯是开着的。")],
+            [("tool", "ha_list_entities"), ("text", "现在开着三盏灯。")],
+        )
+        self.assertEqual(spoken, "现在开着三盏灯。")
+        self.assertIn(hermes.STATE_RETRY_NOTE, requests[1])
+
+    def test_state_question_needs_a_home_assistant_tool(self):
+        # A web search or memory lookup does not count as checking the device.
+        spoken, requests = self.run_turn(
+            "书房灯是不是开着",
+            [("tool", "memory"), ("text", "开着呢。")],
+            [("tool", "ha_get_state"), ("text", "书房灯关着。")],
+        )
+        self.assertEqual(spoken, "书房灯关着。")
+        self.assertEqual(len(requests), 2)
+
+    def test_english_narration_before_a_tool_is_dropped(self):
+        spoken, _ = self.run_turn(
+            "现在有几盏灯开着？",
+            [("text", "I'll check the current "), ("text", "state of all the lights. "),
+             ("tool", "ha_list_entities"), ("text", "现在开着四盏灯。")],
+        )
+        self.assertEqual(spoken, "现在开着四盏灯。")
+
+    def test_english_lead_in_without_tool_is_dropped(self):
+        spoken, _ = self.run_turn(
+            "为什么猫喜欢纸箱", [("text", "Let me think. "), ("text", "猫喜欢纸箱是因为安全感。")]
+        )
+        self.assertEqual(spoken, "猫喜欢纸箱是因为安全感。")
+
+    def test_mixed_chinese_with_english_names_is_kept(self):
+        spoken, _ = self.run_turn(
+            "今天科技新闻", [("tool", "web_search"), ("text", "OpenAI 发了新模型，"), ("text", "估值很高。")]
+        )
+        self.assertEqual(spoken, "我查一下。OpenAI 发了新模型，估值很高。")
+
+    def test_answer_starting_with_english_name_is_kept(self):
+        spoken, _ = self.run_turn(
+            "我的手表有货吗", [("text", "Apple Watch "), ("text", "S11 这款最近常缺货。")]
+        )
+        self.assertEqual(spoken, "Apple Watch S11 这款最近常缺货。")
+
+    def test_state_questions_and_preferences(self):
+        for text in ("现在有几盏灯开着？", "书房灯是不是开着", "卧室现在温度多少",
+                     "阳台漏水了吗", "客厅灯几点开的"):
+            self.assertTrue(hermes.is_state_question(text), text)
+        for text in ("我睡觉的时候，空调应该开多少度？", "我一般睡觉开几度空调",
+                     "关闭书房灯", "为什么天空是蓝色的"):
+            self.assertFalse(hermes.is_state_question(text), text)
+
     def test_device_command_without_tool_is_retried(self):
         spoken, requests = self.run_turn(
             "关闭次卧灯，打开书房灯",
