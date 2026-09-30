@@ -68,6 +68,10 @@ class NativeXiaomiTTS:
     # Below this many spoken units a real sentence can also be ~5328 bytes.
     _REFUSAL_MIN_UNITS = 9
     _SENTENCE_END = re.compile(r"(?<=[。！？!?；;\n])")
+    # xiaozhi sends one sentence per message, usually without its final
+    # punctuation; without a mark, merged sentences run together when read
+    # and cannot be split again when Xiaomi refuses a segment.
+    _CLOSING_MARKS = "。！？!?；;，,：:…~\n"
 
     def __init__(self, speaker, settings=None):
         self.speaker = speaker
@@ -135,6 +139,8 @@ class NativeXiaomiTTS:
         text = str(text or "").strip()
         if not text:
             return
+        if text[-1] not in self._CLOSING_MARKS:
+            text += "。"
 
         self._pending_text += text
         if self._is_first_segment:

@@ -160,6 +160,33 @@ class NativeXiaomiTTSTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(speaker.played_paths), 3)
 
+    async def test_sentences_without_punctuation_are_split_on_refusal(self):
+        # xiaozhi strips the final punctuation of each sentence it sends.
+        speaker = FakeSpeaker(refused=("财政部",))
+        pipeline = NativeXiaomiTTS(
+            speaker, self.settings(target_chars=200, max_chars=300)
+        )
+
+        await pipeline.start("session-1")
+        await pipeline.add_text("我查一下")
+        await pipeline.add_text("今天几条要紧的")
+        await pipeline.add_text("财政部给房贷贴息，十月一日起能省利息；")
+        await pipeline.add_text("科技公司发布了新款手机")
+        completed = await asyncio.wait_for(pipeline.finish(), timeout=1)
+
+        self.assertTrue(completed)
+        self.assertEqual(
+            speaker.generated_texts,
+            [
+                "我查一下。",
+                "今天几条要紧的。财政部给房贷贴息，十月一日起能省利息；科技公司发布了新款手机。",
+                "今天几条要紧的。",
+                "财政部给房贷贴息，十月一日起能省利息；",
+                "科技公司发布了新款手机。",
+            ],
+        )
+        self.assertEqual(len(speaker.played_paths), 3)
+
     async def test_short_reply_with_refusal_size_still_plays(self):
         speaker = FakeSpeaker(sizes={"好了，灯关了。": NativeXiaomiTTS._REFUSAL_BYTES})
         pipeline = NativeXiaomiTTS(speaker, self.settings())
