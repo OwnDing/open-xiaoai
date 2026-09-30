@@ -19,6 +19,12 @@ talking from memory without searching. So the model now calls the tool
 directly and this provider speaks the filler when Hermes reports a
 web_search. A reply that merely opens with a filler is held back until it is
 clear whether a search follows; a filler-only reply is retried once.
+
+xiaozhi also sends its own ~6.5k-character system prompt, written for its
+built-in tools (play_music, hass, get_weather, handle_exit_intent) and a
+cached weather report that tells the model never to look weather up. With
+Hermes that prompt conflicts with SOUL.md and made the model repeat a stale
+"城市没找到" weather error, so only its real-time facts are forwarded.
 """
 
 import json
@@ -47,7 +53,8 @@ COMMAND_WORDS = re.compile(
 FILLERS = (
     "我查一下", "我查查", "查一下", "我搜一下", "我搜搜", "搜一下", "我看一下",
     "我看看", "我帮你查一下", "我帮你查查", "我帮你看看", "让我查一下", "让我看看",
-    "稍等", "稍等一下", "等一下",
+    "稍等", "稍等一下", "等一下", "我再查一下", "我再查查", "我再看一下", "我再看看",
+    "我再搜一下", "我帮你再查一下",
 )
 # Openings dropped when no search follows. First-person forms only, so advice
 # such as "查一下体温吧" is never cut.
@@ -83,6 +90,26 @@ RETRY_NOTE = (
     "现在必须调用 ha_call_service 真正执行，需要确认状态时调用 ha_get_state，"
     "再根据工具结果回答。不要照抄聊天记录里以前的回答。）"
 )
+
+
+CONTEXT_BLOCK = re.compile(r"<context>(.*?)</context>", re.S)
+# xiaozhi refreshes the time on every call; Hermes knows the date but not the
+# time of day or the device's city. Its weather line is deliberately dropped.
+KEPT_CONTEXT = ("Current time", "Today's date", "Today's lunar date", "Device location")
+
+
+def slim_system_prompt(content):
+    """Keep only the real-time facts of xiaozhi's system prompt (or None)."""
+    match = CONTEXT_BLOCK.search(content if isinstance(content, str) else "")
+    if not match:
+        return None
+    facts = [
+        line.strip()
+        for line in match.group(1).splitlines()
+        if line.strip().startswith("- ")
+        and line.strip()[2:].split(":", 1)[0].strip() in KEPT_CONTEXT
+    ]
+    return "语音设备提供的实时信息：\n" + "\n".join(facts) if facts else None
 
 
 def _message_text(message):
@@ -153,6 +180,7 @@ class LLMProvider(LLMProviderBase):
         self.temperature = config.get("temperature")
         self.max_tokens = config.get("max_tokens")
         self.tool_guard = str(config.get("tool_guard", True)).lower() not in ("false", "0", "no")
+        self.slim_system_prompt = str(config.get("slim_system_prompt", True)).lower() not in ("false", "0", "no")
         self.search_filler = config.get("search_filler", "我查一下。")
         self.search_failed_reply = config.get("search_failed_reply", "这次没查到，你再问我一次吧。")
         timeout = config.get("timeout") if isinstance(config.get("timeout"), dict) else {}
@@ -276,6 +304,16 @@ class LLMProvider(LLMProviderBase):
         dialogue = [dict(message) for message in dialogue]
         for message in dialogue:
             message.setdefault("content", "")
+        if self.slim_system_prompt:
+            slimmed = []
+            for message in dialogue:
+                if message.get("role") == "system":
+                    content = slim_system_prompt(message["content"])
+                    if content is None:
+                        continue
+                    message["content"] = content
+                slimmed.append(message)
+            dialogue = slimmed
         users = [m for m in dialogue if m.get("role") == "user"]
         request = _message_text(users[-1]) if users else ""
 

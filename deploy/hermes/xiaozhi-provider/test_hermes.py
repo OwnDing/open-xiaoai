@@ -86,6 +86,13 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(spoken, "🙂 临海最出名的是蛋清羊尾。")
         self.assertEqual(len(requests), 1)
 
+    def test_zai_filler_without_search_is_dropped(self):
+        spoken, _ = self.run_turn(
+            "今天宁波的天气怎么样？",
+            [("text", "我再查一下。"), ("text", "抱歉，今天宁波中雨转小雨。")],
+        )
+        self.assertEqual(spoken, "抱歉，今天宁波中雨转小雨。")
+
     def test_chained_fillers_are_all_dropped_before_a_search(self):
         spoken, _ = self.run_turn(
             "查下天气",
@@ -152,6 +159,40 @@ class ProviderTests(unittest.TestCase):
             "我的手表有货吗", [("text", "Apple Watch "), ("text", "S11 这款最近常缺货。")]
         )
         self.assertEqual(spoken, "Apple Watch S11 这款最近常缺货。")
+
+    XIAOZHI_PROMPT = (
+        "You are a playful assistant.\n<identity>\n你是小七\n</identity>\n"
+        "<tool_and_knowledge>\nAbout weather: The context already provides the local 7-day "
+        "forecast — answer directly without a tool call.\n</tool_and_knowledge>\n"
+        "<context>\n[Important: real time]\n- Current time: 23:31\n"
+        "- Today's date: 2026-09-30 (星期三)\n- Today's lunar date: 八月二十\n"
+        "- Device location: 浙江省宁波市\n- Local upcoming weather: 未找到城市\n\n</context>\n"
+    )
+
+    def test_xiaozhi_system_prompt_is_slimmed_to_real_time_facts(self):
+        slim = hermes.slim_system_prompt(self.XIAOZHI_PROMPT)
+        self.assertIn("- Current time: 23:31", slim)
+        self.assertIn("- Device location: 浙江省宁波市", slim)
+        self.assertIn("- Today's lunar date: 八月二十", slim)
+        self.assertNotIn("weather", slim.lower())
+        self.assertNotIn("tool", slim)
+        self.assertIsNone(hermes.slim_system_prompt("你是家庭语音助手小七。"))
+
+    def test_hermes_receives_the_slim_system_prompt(self):
+        provider = hermes.LLMProvider({"api_key": "x"})
+        sent = []
+
+        def fake_events(dialogue):
+            sent.append(dialogue)
+            yield ("text", "好的。")
+
+        provider._events = fake_events
+        dialogue = [{"role": "system", "content": self.XIAOZHI_PROMPT}, user("你好")]
+        "".join(provider.response("s", dialogue))
+        system = [m for m in sent[0] if m["role"] == "system"]
+        self.assertEqual(len(system), 1)
+        self.assertNotIn("7-day forecast", system[0]["content"])
+        self.assertEqual(dialogue[0]["content"], self.XIAOZHI_PROMPT)  # caller's copy untouched
 
     def test_state_questions_and_preferences(self):
         for text in ("现在有几盏灯开着？", "书房灯是不是开着", "卧室现在温度多少",
