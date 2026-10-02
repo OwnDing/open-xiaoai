@@ -5,9 +5,10 @@
 > 大约 4 小时后，交付一支 2 分 11 秒的电影感宣传片。
 > 片中所有画面和声音都由 AI 编写的代码生成，没有使用任何外部素材。
 
-[![Open-XiaoAI 宣传片](../promo-video/output/cover.jpg)](../promo-video/output/open-xiaoai-promo.mp4)
+[![Open-XiaoAI 宣传片](../promo-video/output/cover.jpg)](https://www.bilibili.com/video/BV1hhao6cEfq)
 
-- 成片：[`promo-video/output/open-xiaoai-promo.mp4`](../promo-video/output/open-xiaoai-promo.mp4)（1920×1080 · 30fps · 2:11）
+- 在线观看：[B 站《小爱音箱 + Hermes Agent，让真正的 AI 管家进入你家》](https://www.bilibili.com/video/BV1hhao6cEfq)
+- 视频文件：[`promo-video/output/open-xiaoai-promo.mp4`](../promo-video/output/open-xiaoai-promo.mp4)（1920×1080 · 30fps · 2:11）
 - 分镜脚本：[`promo-video/storyboard.md`](../promo-video/storyboard.md)
 - 全部源码与构建方法：[`promo-video/`](../promo-video/README.md)
 
