@@ -1,0 +1,35 @@
+{
+  "voices": {
+    "narrator": {"voice": "zh-CN-YunjianNeural", "rate": "-6%", "pitch": "-2Hz", "label": "旁白"},
+    "user":     {"voice": "zh-CN-YunxiNeural",   "rate": "+0%", "pitch": "+0Hz", "label": "我"},
+    "xiaoai":   {"voice": "zh-CN-XiaoxiaoNeural", "rate": "+6%", "pitch": "+0Hz", "label": "小爱"},
+    "xiaoqi":   {"voice": "zh-CN-XiaoxiaoNeural", "rate": "+2%", "pitch": "+0Hz", "label": "小七"}
+  },
+  "lines": {
+    "N01": {"role": "narrator", "text": "它每天都在你家。陪你听歌，帮你定闹钟。"},
+    "N02": {"role": "narrator", "text": "可它，真的懂你吗？"},
+    "U01": {"role": "user",     "text": "小爱同学，我有点冷，还有点困。"},
+    "X01": {"role": "xiaoai",   "text": "抱歉，我没有听懂。"},
+    "U02": {"role": "user",     "text": "还记得我说过，睡觉时空调开几度吗？"},
+    "X02": {"role": "xiaoai",   "text": "这个问题，我还在学习中。"},
+    "N03": {"role": "narrator", "text": "家里的智能设备来自不同品牌，一个 App 管一样。小爱，只认得米家。"},
+    "N04": {"role": "narrator", "text": "智能家居，不该这么不智能。"},
+    "N05": {"role": "narrator", "text": "现在，给小爱，换一颗 AI 大脑。"},
+    "N06": {"role": "narrator", "text": "原来的小爱，功能一个不少。喊一声小七，唤醒你的 AI 管家。"},
+    "U03": {"role": "user",     "text": "你好小七。"},
+    "Q00": {"role": "xiaoqi",   "text": "我在。"},
+    "N07": {"role": "narrator", "text": "你的声音被实时识别成文字，Hermes 智能体负责思考和行动，再通过 Home Assistant 调度全屋设备。"},
+    "N08": {"role": "narrator", "text": "用小米账号授权登录，米家设备自动同步，其他品牌的设备也能统一接入。"},
+    "U04": {"role": "user",     "text": "小七，我有点冷，还有点困。"},
+    "Q01": {"role": "xiaoqi",   "text": "客厅空调调到二十六度了。今晚早点睡吧，十点半我提醒你。"},
+    "U05": {"role": "user",     "text": "把客厅灯关了，窗帘也拉上。"},
+    "Q02": {"role": "xiaoqi",   "text": "好了，灯关了，窗帘也拉上了。"},
+    "U06": {"role": "user",     "text": "小七，记住：我睡觉的时候，空调开二十五度。"},
+    "Q03": {"role": "xiaoqi",   "text": "记住了，睡觉时空调二十五度。"},
+    "U07": {"role": "user",     "text": "小七，我睡觉了。"},
+    "Q04": {"role": "xiaoqi",   "text": "灯都关好了，卧室空调调到二十五度。阳台窗户还开着，记得关一下。晚安。"},
+    "N09": {"role": "narrator", "text": "查新闻、定提醒、学会新技能，它能做的，远不止这些。"},
+    "N10": {"role": "narrator", "text": "它记得你的习惯，也懂你的家。"},
+    "N11": {"role": "narrator", "text": "Open-XiaoAI，让小爱成为你的贴身家庭管家。", "tts": "Open 小爱 AI，让小爱成为你的贴身家庭管家。"}
+  }
+}

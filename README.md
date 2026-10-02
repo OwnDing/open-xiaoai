@@ -67,6 +67,14 @@
 
 ## 你的声音 + 小爱音箱 = 无限可能
 
+👉 [Open-XiaoAI 宣传片《小爱，换个大脑》：接入 AI 大模型 + Home Assistant 的家庭管家](./promo-video/output/open-xiaoai-promo.mp4)
+
+[![](./promo-video/output/cover.jpg)](./promo-video/output/open-xiaoai-promo.mp4)
+
+这支宣传片从分镜、3D 场景、配音、配乐到剪辑，全部由 AI（Claude Opus 5.5）编写代码完成。
+制作过程、原始提示词和可复用的方法见 👉 [用 AI 制作精美的产品宣传片](docs/ai-promo-video-guide.md)，
+分镜与源码见 [`promo-video/`](promo-video/README.md)。
+
 👉 [小爱音箱接入小智 AI 演示视频](https://www.bilibili.com/video/BV1TxJhzvEhz)
 
 [![](./docs/images/xiaozhi.jpg)](https://www.bilibili.com/video/BV1TxJhzvEhz)
