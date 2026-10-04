@@ -1,0 +1,14 @@
+{
+  "input": "耳机 (京鱼座蓝牙小黑胶)",
+  "minutes": 30,
+  "clips": [
+    {
+      "label": "stereo",
+      "output": "耳机 (京鱼座蓝牙小黑胶)",
+      "speech": "clips/stereo.wav",
+      "at": 30,
+      "every": 300,
+      "tones": true
+    }
+  ]
+}
