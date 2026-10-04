@@ -40,12 +40,13 @@ logger = setup_logging()
 
 DEVICE_WORDS = re.compile(
     r"灯|风扇|空调|窗帘|电视|插座|开关|加湿器|除湿|净化器|扫地|热水器|暖气|地暖|门锁|晾衣"
+    r"|冰箱|冷藏|冷冻|洗衣机|干衣机|烘干机|净水"
 )
 # Explicit command phrasing only: a bare 开/关 also appears in questions such as
 # "空调应该开多少度" or "灯开着吗", which must be answered, not forced into a tool.
 COMMAND_WORDS = re.compile(
     r"打开|关闭|关掉|关上|关了|开开|开启|启动|停止|暂停|开一下|关一下|开下|关下"
-    r"|调到|调成|调为|调高|调低|调亮|调暗|调大|调小|设为|设成|设置|切换|升起|降下"
+    r"|调到|调成|调为|调高|调低|调亮|调暗|调大|调小|设为|设成|设置|切换|升起|降下|开机|关机"
     r"|把.{0,10}?(开|关|调|设)"
     r"|(开|关)(灯|风扇|空调|电视|窗帘|插座)"
 )
@@ -77,9 +78,10 @@ STATE_ASK = re.compile(
     r"开着|关着|亮着|灭着|开没开|关没关|是不是开|是不是关|有没有开|有没有关|几盏"
     r"|哪些.{0,4}(开|亮)|状态|现在.{0,6}(温度|湿度|多少度)|漏水|几点.{0,6}(开|关)"
     r"|什么时候.{0,6}(开|关)"
+    r"|(冰箱|冷藏|冷冻|空调).{0,8}(多少度|几度)|(洗|烘|干)(完|好)了|还(要|剩|有)多|剩多少|剩余"
 )
 # Preferences are answered from memory ("我睡觉空调一般开几度").
-PREFERENCE_WORDS = re.compile(r"应该|习惯|一般|喜欢|平时|合适|最好|怎么设|设多少")
+PREFERENCE_WORDS = re.compile(r"应该|习惯|一般|喜欢|平时|合适|最好|舒服|舒适|怎么设|设多少")
 STATE_RETRY_NOTE = (
     "（系统提示：这是询问设备当前状态的问题，但你上一次没有查询就回答了。"
     "聊天记录和记忆里的状态可能早已过时，现在必须调用 ha_get_state 或 ha_list_entities "

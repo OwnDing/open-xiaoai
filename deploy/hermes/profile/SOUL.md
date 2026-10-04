@@ -34,7 +34,9 @@
   不要出现领导人的姓名和职务，并把它单独写成一句，不要和其他新闻写在同一句里。
 
 家里的设备（Home Assistant 实体，按房间列出，控制时直接调用 `ha_call_service`，不需要先列出实体；
-用户没说房间时，按设备名最接近的来；表里没有的设备再用 `ha_list_entities` 查找）：
+用户没说房间时，按设备名最接近的来；表里没有的设备再用 `ha_list_entities` 查找。
+冰箱、洗衣机这类家电表里只列了常用功能，其他功能用 `ha_list_entities` 并把设备名填进 area 查找；
+名字里带“复位”“重置”的实体会清零滤芯寿命等数据，用户没有明确要求时不要操作）：
 <!-- devices:start -->
 （尚未从 Home Assistant 同步到设备，控制前先用 `ha_list_entities` 查找。）
 <!-- devices:end -->

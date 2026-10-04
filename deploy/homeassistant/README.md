@@ -45,6 +45,33 @@ docker restart homeassistant
 
 这个补丁修复的是 v0.5.0 在 Python 3.14 下的问题：米家云报告设备离线时，集成会抛出 `TypeError: a coroutine was expected, got None`，HA 返回 500，而不是正常的“设备离线”错误。
 
+## 安装 HACS（接入海尔等第三方集成）
+
+HACS 的 release 包（约 19 MB）同样从 GitHub 下载，所以先在别的电脑下载
+[hacs.zip](https://github.com/hacs/integration/releases/latest)，再拷进容器安装：
+
+```powershell
+docker cp hacs.zip homeassistant:/tmp/hacs.zip
+docker exec homeassistant python3 /opt/xiaoqi-scripts/install_custom_component.py hacs /tmp/hacs.zip
+docker restart homeassistant
+```
+
+`install_custom_component.py` 也能安装 GitHub 源码包里的 `custom_components/<domain>`，
+HACS 自己下载失败时可以用它手动安装其他集成。
+
+HA 重启后，在浏览器里：
+
+1. 设置 → 设备与服务 → 添加集成 → **HACS**，勾选全部说明，提交；
+2. 按提示打开 `https://github.com/login/device`，用 GitHub 账号登录并输入页面上的验证码，完成授权；
+3. [banto6/haier](https://github.com/banto6/haier) 不在 HACS 默认列表里（能搜到的 **Haier hOn** 是海外版 hOn App 用的，
+   国内海尔智家账号登录不了）：HACS 右上角 ⋮ → 自定义存储库 → 填 `https://github.com/banto6/haier`，类型选“集成”，
+   添加后搜索 **Haier** → 下载 → 重启 HA；
+4. 设置 → 设备与服务 → 添加集成 → **Haier** → “使用账号密码自动获取 Token 登录”，
+   填海尔智家 App 的手机号和密码（密码只用于这次登录，HA 只保存 Token）。
+
+HA 容器访问 GitHub API 和海尔云都正常，HACS 浏览、下载集成不需要额外代理。
+海尔设备加入 HA 后，按下文“让小七认识设备”重新生成设备表，小七就能控制它们。
+
 ## 排查“说了没反应”
 
 书房灯、主卧灯、次卧灯这类设备，是由音箱（`parent` 为音箱的 did）作为网关转发命令的，流程如下：
@@ -98,10 +125,18 @@ docker compose run --rm --entrypoint sh hermes /seed/profile/install.sh
 
 `ha_device_table.py` 的规则：
 
-- 只列出能控制的设备（灯、开关、空调、风扇、窗帘、加湿器、扫地机、热水器、音箱、门锁、场景），以及温湿度、PM2.5、门窗、人体、水浸等传感器；
+- 以 HA 的 **设置 → 语音助手 → 公开** 为准：公开的实体列入设备表，取消公开的不列；
+- HA 还没决定是否公开的实体，按默认规则：只列出能控制的设备（灯、开关、空调、风扇、窗帘、加湿器、扫地机、热水器、音箱、门锁、场景），以及温湿度、PM2.5、门窗、人体、水浸等传感器；
+- 状态类传感器、`select`、`number`（比如冰箱的冷藏温度设定、洗衣机的剩余时间）只有手动公开后才列入；
 - 按房间分组；
 - 跳过配置类和诊断类实体；
 - 设备已有主实体时（比如灯本身、风扇本身、音箱本身），跳过它附带的功能开关，比如助眠模式、童锁、提示音、麦克风静音。其中麦克风静音一旦被误关，音箱就听不到小七了。
+
+海尔这类家电一台就有几十个实体，HA 默认会把它们的功能开关全部公开。接入后先到“公开”页面整理：
+取消公开不需要语音控制的开关（尤其是“RO复位”“初滤复位”这类会清零滤芯寿命的），
+再公开常用的状态和设定（运行状态、剩余时间、冷藏/冷冻温度、滤芯剩余等），然后重新生成设备表。
+注意：“公开”只决定设备表里列出哪些实体，小七仍然可以用 `ha_list_entities` 查到其他实体。
+HA 默认不公开水浸传感器，需要在“公开”页面手动打开，否则它会从设备表里消失。
 
 ## 实测（2026-09-29）
 

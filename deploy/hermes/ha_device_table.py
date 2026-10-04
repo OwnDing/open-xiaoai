@@ -2,7 +2,12 @@
 
 Hermes controls a device in one tool round when it already knows the entity
 id, so SOUL.md carries a compact table of the controllable entities, grouped
-by area. Re-run this after adding or renaming devices in Home Assistant:
+by area. Entities follow Home Assistant's Settings > Voice assistants > Expose
+switches: exposed ones are listed (feature switches of a light, fan or speaker
+excepted), unexposed ones are left out. Entities Home Assistant has not
+decided on yet fall back to the domain rules below.
+
+Re-run this after adding or renaming devices, or changing what is exposed:
 
     docker run --rm --network xiaozhi-server_default --env-file .env \
         -v ${PWD}:/hermes --entrypoint /app/.venv/bin/python \
@@ -33,6 +38,9 @@ SENSOR_CLASSES = {
     "sensor": {"temperature", "humidity", "pm25", "carbon_dioxide", "illuminance"},
     "binary_sensor": {"door", "window", "motion", "occupancy", "moisture"},
 }
+# Appliances (fridge, washer...) bring dozens of entities; their status
+# sensors and set-points are listed only once exposed to voice assistants.
+EXPOSABLE_DOMAINS = {"sensor", "binary_sensor", "select", "number", "button"}
 MAX_LINES = 80
 
 
@@ -72,6 +80,11 @@ def clean_name(name):
     return " ".join(deduped)
 
 
+def exposed(entry):
+    """True/False as set under Voice assistants > Expose; None if not decided yet."""
+    return ((entry.get("options") or {}).get("conversation") or {}).get("should_expose")
+
+
 def build_lines(areas, devices, entities, states):
     area_names = {area["area_id"]: area["name"] for area in areas}
     device_area = {device["id"]: device.get("area_id") for device in devices}
@@ -94,10 +107,14 @@ def build_lines(areas, devices, entities, states):
         entry = registry.get(entity_id, {})
         if entry.get("entity_category") or entry.get("disabled_by") or entry.get("hidden_by"):
             continue
-        if domain in SENSOR_CLASSES:
-            if attributes.get("device_class") not in SENSOR_CLASSES[domain]:
-                continue
-        elif domain not in CONTROL_DOMAINS:
+        if exposed(entry) is None:
+            listed = (
+                domain in CONTROL_DOMAINS
+                or attributes.get("device_class") in SENSOR_CLASSES.get(domain, ())
+            )
+        else:
+            listed = exposed(entry) and domain in CONTROL_DOMAINS | EXPOSABLE_DOMAINS
+        if not listed:
             continue
         if domain == "switch" and entry.get("device_id") in primary_devices:
             continue

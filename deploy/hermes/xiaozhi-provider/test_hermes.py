@@ -202,6 +202,15 @@ class ProviderTests(unittest.TestCase):
                      "关闭书房灯", "为什么天空是蓝色的"):
             self.assertFalse(hermes.is_state_question(text), text)
 
+    def test_appliance_questions_and_commands(self):
+        for text in ("冰箱冷藏室多少度", "洗衣机洗完了吗", "干衣机还要多久",
+                     "净水机滤芯还剩多少"):
+            self.assertTrue(hermes.is_state_question(text), text)
+        for text in ("明天宁波温度多少度", "空调开几度睡觉舒服", "冷冻的饺子怎么煮"):
+            self.assertFalse(hermes.is_state_question(text), text)
+        for text in ("冰箱冷藏调到4度", "打开冰箱速冻", "洗衣机关机"):
+            self.assertTrue(hermes.is_control_request(text), text)
+
     def test_device_command_without_tool_is_retried(self):
         spoken, requests = self.run_turn(
             "关闭次卧灯，打开书房灯",
