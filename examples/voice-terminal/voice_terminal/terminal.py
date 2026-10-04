@@ -18,7 +18,9 @@ log = logging.getLogger(__name__)
 
 RATE = 16000
 PROMPT_RATE = 48000
-RECONNECT_MAX_DELAY = 30.0
+# The backend is usually on the same LAN or host; after it restarts the
+# terminal should be back within seconds.
+RECONNECT_MAX_DELAY = 10.0
 AUDIO_RETRY_SECONDS = 5.0
 
 
