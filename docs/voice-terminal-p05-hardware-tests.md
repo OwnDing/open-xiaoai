@@ -11,7 +11,7 @@
 | 主机 | mini PC `192.168.5.10`，Intel N100，16 GB，Windows 11 25H2，Intel 无线蓝牙适配器 |
 | 音箱 | 京鱼座蓝牙小黑胶 |
 | 运行环境 | uv 0.12.23 安装的 CPython 3.12.15（用户目录，未改系统），sounddevice 0.5.6 / PortAudio V19.7.0，WASAPI 共享模式 |
-| 工具 | [`deploy/voice-terminal/audio_probe.py`](../deploy/voice-terminal/audio_probe.py)（设备、播放、录音、常开、分析）、[`frontend_eval.py`](../deploy/voice-terminal/frontend_eval.py)（前端对比）、[`make_clips.py`](../deploy/voice-terminal/make_clips.py)（用已部署的 sherpa-tts 生成测试语音） |
+| 工具 | [`deploy/voice-terminal/audio_probe.py`](../deploy/voice-terminal/audio_probe.py)（设备、播放、录音、常开、分析）、[`frontend_eval.py`](../deploy/voice-terminal/frontend_eval.py)（前端对比）、[`make_clips.py`](../examples/voice-terminal/scripts/make_clips.py)（用已部署的 sherpa-tts 生成测试语音） |
 | 测试目录 | Windows `%USERPROFILE%\voice-terminal`；录音不提交 Git |
 
 WASAPI 枚举到的设备（会话 0 与会话 1 相同，远程桌面会话里没有“远程音频”设备）：
