@@ -1,0 +1,41 @@
+# Side-by-side xiaozhi backend for the voice terminals (branch feat/voice-terminals).
+#
+# Copy next to the production docker-compose.yml in the xiaozhi-server deployment
+# directory. It reuses sherpa-tts and Hermes over the production network and leaves
+# the production backend (ports 18000/18003) and the 小爱 bridge untouched.
+#
+#   docker compose -f docker-compose.voice-terminal.yml up -d --build
+#
+# Build context: a copy of deploy/sherpa-tts/xiaozhi-server-overrides from this branch.
+# Data: a copy of ./data with server.websocket pointing at port 18100.
+name: xiaozhi-voice-terminal
+
+services:
+  xiaozhi-esp32-server-vt:
+    build:
+      context: ./xiaozhi-server-overrides-vt
+    image: local/xiaozhi-esp32-server:voice-terminals
+    container_name: xiaozhi-esp32-server-vt
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      - TZ=Asia/Shanghai
+      # Same as production: devices not listed below get text only (小爱 native TTS).
+      - XIAOZHI_TTS_OUTPUT_MODE=native_xiaomi
+      # Voice terminals that play server audio (comma-separated Device-Id values).
+      - XIAOZHI_SERVER_AUDIO_DEVICES=02:76:74:00:00:01,02:76:74:00:00:02
+    ports:
+      - "18100:8000"
+      - "18103:8003"
+    volumes:
+      - ./data-vt:/opt/xiaozhi-esp32-server/data
+      - ./models/SenseVoiceSmall/model.pt:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt
+      - ./models/sherpa-onnx-sense-voice:/opt/xiaozhi-esp32-server/models/sherpa-onnx-sense-voice
+      - ../open-xiaoai/deploy/hermes/xiaozhi-provider/hermes.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/hermes.py:ro
+    networks:
+      - xiaozhi-server_default
+
+networks:
+  xiaozhi-server_default:
+    external: true

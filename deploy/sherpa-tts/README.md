@@ -23,6 +23,12 @@ The bridge supports two output paths:
 - `sherpa`: the backend synthesizes Sherpa-ONNX audio and streams Opus audio
   through the bridge as before.
 
+Other devices can share a `native_xiaomi` backend and still get server audio:
+list their `Device-Id` values in `XIAOZHI_SERVER_AUDIO_DEVICES`
+(comma-separated). Devices not listed, such as the 小爱 bridge, keep getting
+text only. The PC voice terminals use this; see
+[examples/voice-terminal](../../examples/voice-terminal/README.md).
+
 On the Windows MINI, run the switch script from PowerShell:
 
 ```powershell

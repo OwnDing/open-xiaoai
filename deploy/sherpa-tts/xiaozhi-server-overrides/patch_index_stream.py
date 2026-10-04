@@ -21,7 +21,13 @@ source = replace_once(
     '''        self.audio_format = "pcm"
         self.before_stop_play_files = []
         self.output_mode = os.getenv("XIAOZHI_TTS_OUTPUT_MODE", "sherpa").strip().lower()
-        self.native_xiaomi_text_only = self.output_mode == "native_xiaomi"
+        # Devices that get server audio even in native_xiaomi mode, such as
+        # PC voice terminals sharing this backend with the 小爱 bridge.
+        self.server_audio_devices = {
+            device.strip().lower()
+            for device in os.getenv("XIAOZHI_SERVER_AUDIO_DEVICES", "").split(",")
+            if device.strip()
+        }
 ''',
 )
 
@@ -64,6 +70,13 @@ source = replace_once(
         )
         self.pcm_buffer.clear()
 
+    def _native_xiaomi_text_only(self):
+        # self.conn is set by open_audio_channels before any text arrives.
+        if self.output_mode != "native_xiaomi":
+            return False
+        device_id = (getattr(self.conn, "device_id", None) or "").strip().lower()
+        return device_id not in self.server_audio_devices
+
     def to_tts_single_stream(self, text, is_last=False):
 """,
 )
@@ -76,7 +89,7 @@ source = replace_once(
 ''',
     '''    async def text_to_speak(self, text, is_last):
         """流式处理TTS音频，每句只推送一次音频列表"""
-        if self.native_xiaomi_text_only:
+        if self._native_xiaomi_text_only():
             # The bridge will synthesize these text segments with Xiaomi's
             # native mibrain service. Do not create or pace redundant audio.
             self.tts_audio_queue.put((SentenceType.FIRST, [], text))
