@@ -27,6 +27,7 @@
 - DirectShow `Capture` pin 报告包括 48 kHz / 单声道 / 16 bit 在内的可选格式。
 - 格式枚举命令末尾的 `Error opening input file` 是 `-list_options true` 的退出输出，单独不能作为实际录音失败的结论；需要正常录音验证。
 - 这些格式可能来自 Windows 音频转换，不代表蓝牙链路的实际编解码采样率。
+- P0.5 复查（同日）：WASAPI 报告该输入为 8000 Hz，本次真人录音在 4 kHz 以上几乎没有能量，确认链路是 8 kHz 窄带（CVSD），48 kHz 是 Windows 转换后的格式。见 [P0.5 硬件测试记录](voice-terminal-p05-hardware-tests.md)。
 
 ## 实际采集
 
@@ -104,6 +105,8 @@ temp/audio-tests/2026-10-04/bluetooth-microphone-speech.wav
 ```
 
 该文件与采集得到的 `speech.wav` 内容一致，未剪辑或降噪；采集时已转换为上述 16 kHz 单声道 PCM。`temp/` 被 Git 忽略，录音不会随文档提交。用户已直接回听，确认是刚才朗读的声音。
+
+2026-10-04 P0.5 复查时，当前工作机的项目目录里没有找到这个本地副本；下面的 Windows 原文件仍在。
 
 Windows 原文件完整位置：
 
