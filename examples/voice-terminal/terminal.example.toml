@@ -1,0 +1,51 @@
+# One file per terminal. Relative paths are relative to this file.
+
+[terminal]
+name = "客厅蓝牙音箱"
+# Unique per terminal; the backend routes server audio by this ID
+# (XIAOZHI_SERVER_AUDIO_DEVICES). A locally administered MAC-style value.
+device_id = "02:76:74:00:00:01"
+room = "客厅"
+
+[server]
+websocket_url = "ws://127.0.0.1:18100/xiaozhi/v1/"
+access_token = ""
+
+[audio]
+# Names as `python -m voice_terminal devices --host-api WASAPI` prints them.
+input = "耳机 (京鱼座蓝牙小黑胶)"
+output = "耳机 (京鱼座蓝牙小黑胶)"
+host_api = "WASAPI"
+# P0.5 corpus: high-pass + WebRTC noise suppression + gain did best on this mic.
+frontend = ["hpf", "ns", "agc"]
+output_gain = 1.0
+
+[wake]
+keywords = ["你好小七"]
+model_dir = "models/kws"
+# The bridge uses 0.2; the 8 kHz Bluetooth mic needs a looser threshold.
+threshold = 0.05
+score = 2.0
+
+[vad]
+model = "models/silero_vad.onnx"
+threshold = 0.5
+min_speech_ms = 250
+min_silence_ms = 500
+short_utterance_ms = 800
+short_utterance_silence_ms = 1000
+pre_roll_ms = 800
+max_utterance_s = 15
+
+[session]
+idle_timeout_s = 20
+tts_end_guard_ms = 400
+no_reply_timeout_s = 6
+reply_timeout_s = 90
+wake_prompt = "prompts/wake.wav"
+no_reply_prompt = "prompts/no_reply.wav"
+goodbye_prompt = "prompts/goodbye.wav"
+
+[control]
+host = "127.0.0.1"
+port = 18110

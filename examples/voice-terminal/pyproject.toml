@@ -1,0 +1,36 @@
+[project]
+name = "open-xiaoai-voice-terminal"
+version = "0.1.0"
+description = "电脑音频设备接入小智后端的语音终端"
+requires-python = ">=3.12"
+dependencies = [
+    "av>=14",
+    "livekit>=1.0",
+    "numpy>=2.2",
+    "onnxruntime>=1.20",
+    # sherpa_onnx.text2token imports it to encode wake words.
+    "pypinyin>=0.54.0",
+    "sentencepiece>=0.2.0",
+    "sherpa-onnx==1.12.29",
+    # sherpa-onnx declares this dynamically, so uv misses it; it carries the
+    # onnxruntime.dll that sherpa needs (Windows 11 has an older one in System32).
+    "sherpa-onnx-core==1.12.29",
+    "sounddevice>=0.5",
+    "soxr>=0.5",
+    "websockets>=15",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["backend: needs a running xiaozhi backend (VT_BACKEND_URL)"]
+
+# The MINI is in mainland China; uv.lock was resolved against this mirror.
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true

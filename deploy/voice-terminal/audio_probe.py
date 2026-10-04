@@ -433,7 +433,7 @@ def run_levels(args):
     for start in range(0, len(x) - n + 1, n):
         seg = x[start:start + n]
         tones = " ".join(
-            f"{freq}:{float(np.max(narrowband_db(seg, rate, freq))):6.1f}"
+            f"{freq}:{float(np.max(narrowband_db(seg, rate, freq, window=min(0.2, args.window)))):6.1f}"
             for freq in TONES_HZ
             if freq < rate * 0.45
         )

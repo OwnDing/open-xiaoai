@@ -1,8 +1,9 @@
-"""Synthesize the P0.5 announcement clips with the deployed sherpa-tts.
+"""Synthesize test clips or terminal prompts with the deployed sherpa-tts.
 
 Run inside a container on the backend's Docker network, e.g.
-  docker cp make_clips.py xiaozhi-esp32-server:/tmp/
+  docker cp scripts/make_clips.py xiaozhi-esp32-server:/tmp/
   docker exec xiaozhi-esp32-server python /tmp/make_clips.py /tmp/p05-clips
+  docker exec xiaozhi-esp32-server python /tmp/make_clips.py /tmp/prompts prompts
 """
 
 import json
@@ -19,6 +20,19 @@ CLIPS = {
     "take_start": "开始录音，请读第一句。",
     "take_end": "录音结束。",
 }
+# Voice-terminal prompts (examples/voice-terminal, [session] *_prompt).
+PROMPTS = {
+    "wake": "我在。",
+    "no_reply": "我没听清，再说一遍？",
+    "goodbye": "有需要再叫我。",
+}
+# Spoken input for the end-to-end test (tests/e2e.toml).
+E2E = {
+    "wake_phrase": "你好小七。",
+    "q_math": "一加一等于几？",
+    "q_time": "现在几点了？",
+}
+SETS = {"p05": CLIPS, "prompts": PROMPTS, "e2e": E2E}
 
 
 def synthesize(text):
@@ -34,8 +48,9 @@ def synthesize(text):
 
 def main():
     out = Path(sys.argv[1] if len(sys.argv) > 1 else "p05-clips")
+    clips = SETS[sys.argv[2] if len(sys.argv) > 2 else "p05"]
     out.mkdir(parents=True, exist_ok=True)
-    for name, text in CLIPS.items():
+    for name, text in clips.items():
         pcm, rate = synthesize(text)
         with wave.open(str(out / f"{name}.wav"), "wb") as w:
             w.setnchannels(1)
