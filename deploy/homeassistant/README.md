@@ -114,6 +114,14 @@ HA 容器访问 GitHub API 和海尔云都正常，HACS 浏览、下载集成不
 
 米家的实体 ID 很长，比如 `light.<厂商>_cn_<设备ID>_<型号>_s_2_light`。可以把设备表写进小七的人设 `SOUL.md`，这样每条控制命令少一轮“先列出设备”的推理，约快 0.6 秒。
 
+米家里新增了设备，HA 不会自动导入。先拉取新设备（等同于界面上 Xiaomi Home → 配置 → 更新设备；`--check` 只看会增减几台，不保存；会移除设备时默认放弃）：
+
+```powershell
+cd C:\Users\djcmy\Documents\develop\ai\open-xiaoai\deploy\homeassistant
+docker exec --env-file ..\hermes\.env homeassistant python3 /opt/xiaoqi-scripts/xiaomi_update_devices.py --check
+docker exec --env-file ..\hermes\.env homeassistant python3 /opt/xiaoqi-scripts/xiaomi_update_devices.py
+```
+
 在 HA 里新增、改名或调整房间后，重新生成设备表：
 
 ```powershell
@@ -124,6 +132,8 @@ docker compose run --rm --entrypoint sh hermes /seed/profile/install.sh
 ```
 
 `ha_device_table.py` 的规则：
+
+- 小米集成里名字带 `*` 的非标准实体（插座的指示灯勿扰、充电保护、倒计时等）不列入；配置类实体（如插座指示灯）不影响“这个设备本身就是开关”的判断；
 
 - 以 HA 的 **设置 → 语音助手 → 公开** 为准：公开的实体列入设备表，取消公开的不列；
 - HA 还没决定是否公开的实体，按默认规则：只列出能控制的设备（灯、开关、空调、风扇、窗帘、加湿器、扫地机、热水器、音箱、门锁、场景），以及温湿度、PM2.5、门窗、人体、水浸等传感器；

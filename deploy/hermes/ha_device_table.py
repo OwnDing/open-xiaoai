@@ -93,10 +93,12 @@ def build_lines(areas, devices, entities, states):
     # A device with a primary entity (light, fan, speaker...) also exposes
     # feature switches (sleep mode, child lock, mic mute...). Only list those
     # switches for devices whose switch *is* the device, e.g. a smart plug.
+    # Config entities don't count: a plug's indicator LED is a "light".
     primary_devices = {
         entity.get("device_id")
         for entity in entities
         if entity["entity_id"].split(".", 1)[0] in CONTROL_DOMAINS - {"switch", "scene"}
+        and not (entity.get("entity_category") or entity.get("disabled_by") or entity.get("hidden_by"))
     }
 
     grouped = defaultdict(list)
@@ -106,6 +108,12 @@ def build_lines(areas, devices, entities, states):
         attributes = state.get("attributes", {})
         entry = registry.get(entity_id, {})
         if entry.get("entity_category") or entry.get("disabled_by") or entry.get("hidden_by"):
+            continue
+        # Xiaomi Home marks vendor-specific properties with "*" (a plug's
+        # LED do-not-disturb, charge protection, timers...). Home Assistant
+        # exposes new switches by default, so leave these out of the table;
+        # Hermes can still find them with ha_list_entities.
+        if (entry.get("original_name") or "").lstrip().startswith("*"):
             continue
         if exposed(entry) is None:
             listed = (
