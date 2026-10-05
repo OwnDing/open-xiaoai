@@ -77,7 +77,8 @@ def context_lines(config: dict, device_id) -> list[str]:
     room = str(device.get("room") or "").strip()
     if room:
         lines.append(
-            f"- Device room: {room}（用户正在这个房间里对这台设备说话；"
+            f"- Device room: {room}（此刻你正运行在{room}的这台设备上，用户在{room}对它说话；"
+            f"问到你在哪、是哪台设备时以这里为准，即使人设里提到别的音箱；"
             f"没有说明房间的设备指令和问题，指的就是{room}）"
         )
     style = str(device.get("reply_style") or "").strip()
