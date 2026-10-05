@@ -12,6 +12,7 @@ from xiaozhi.ref import (
     set_speech_frames,
 )
 from xiaozhi.services.protocols.typing import AbortReason, DeviceState, ListeningMode
+from xiaozhi.services.audio.health import HEALTH
 from xiaozhi.utils.base import get_env
 
 
@@ -144,7 +145,7 @@ class __EventManager:
         """TTS结束"""
         self._begin_session(
             Step.on_tts_end,
-            ignored_steps=(Step.on_interrupt, Step.on_tts_end),
+            ignored_steps=(Step.idle, Step.on_interrupt, Step.on_tts_end),
         )
 
     def on_tts_start(self, session_id):
@@ -232,11 +233,7 @@ class __EventManager:
             timeout=APP_CONFIG["wakeup"]["timeout"],
         )
         if step == "timeout":
-            # 如果没人说话，则回到 IDLE 状态
-            xiaozhi.set_device_state(DeviceState.IDLE)
-            print("👋 已退出唤醒")
-            after_wakeup = APP_CONFIG["wakeup"]["after_wakeup"]
-            await after_wakeup(speaker)
+            await self._end_session(session_id, xiaozhi, speaker)
             return
         if step != Step.on_speech:
             return
@@ -270,6 +267,41 @@ class __EventManager:
             await speaker.play(text=prompt)
         if self._is_current_session(session_id):
             self._begin_session(Step.on_tts_end)
+
+    async def _end_session(self, session_id, xiaozhi, speaker):
+        with self.state_lock:
+            if session_id != self.session_id:
+                return
+            self.current_step = Step.idle
+        kws = get_kws()
+        kws.pause()
+        HEALTH.emit("session_exit_start", session_id=session_id, reason="no_speech_timeout")
+        try:
+            # IDLE stops VAD and the conversation streams. KWS has its own
+            # stream, so keep it paused through the goodbye and its echo.
+            xiaozhi.set_device_state(DeviceState.IDLE)
+            print("👋 已退出唤醒")
+            after_wakeup = APP_CONFIG["wakeup"].get("after_wakeup")
+            if callable(after_wakeup):
+                HEALTH.emit("session_exit_prompt_start", session_id=session_id)
+                try:
+                    await after_wakeup(speaker)
+                except Exception as error:
+                    HEALTH.emit("session_exit_prompt_error", session_id=session_id, error=type(error).__name__)
+                    print(f"❌ 退出提示播放失败: {error}")
+                else:
+                    HEALTH.emit("session_exit_prompt_end", session_id=session_id)
+                guard_ms = max(0, APP_CONFIG["wakeup"].get("exit_guard_ms", 300))
+                await asyncio.sleep(guard_ms / 1000)
+                HEALTH.emit("session_exit_guard_end", session_id=session_id, guard_ms=guard_ms)
+        except asyncio.CancelledError:
+            HEALTH.emit("session_exit_cancelled", session_id=session_id)
+            raise
+        finally:
+            # resume only requests a reset; the inference thread owns the model.
+            # Nested pauses keep an interrupted exit from unpausing a new wake.
+            kws.resume(reason="session_exit")
+            HEALTH.emit("session_exit_end", session_id=session_id, kws_paused=kws.paused)
 
     async def wakeup(self, text, source):
         before_wakeup = APP_CONFIG["wakeup"]["before_wakeup"]

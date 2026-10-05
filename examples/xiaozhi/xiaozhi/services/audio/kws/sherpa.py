@@ -21,6 +21,11 @@ class _SherpaOnnx:
         )
         self.stream = self.keyword_spotter.create_stream()
 
+    def reset(self):
+        # Reuse the loaded model but discard features as well as decoder state:
+        # paused audio creates a discontinuity in this stream.
+        self.stream = self.keyword_spotter.create_stream()
+
     def kws(self, frames):
         samples = np.frombuffer(frames, dtype=np.int16)
         samples = samples.astype(np.float32) / 32768.0

@@ -47,6 +47,8 @@ APP_CONFIG = {
         ],
         # 静音多久后自动退出唤醒（秒）
         "timeout": 20,
+        # 退出播报后的余音保护时间（ms），结束后清理唤醒识别状态。
+        "exit_guard_ms": 300,
         # 语音识别结果回调
         "before_wakeup": before_wakeup,
         # 退出唤醒时的提示语（设置为空可关闭）

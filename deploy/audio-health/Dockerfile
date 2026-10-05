@@ -25,7 +25,9 @@ FROM local/open-xiaoai-xiaozhi:smooth-audio AS runtime
 COPY --from=builder /src/examples/xiaozhi/target/release/libopen_xiaoai_server.so /app/.venv/lib/python3.12/site-packages/open_xiaoai_server/open_xiaoai_server.abi3.so
 COPY examples/xiaozhi/xiaozhi/services/audio/health.py /app/xiaozhi/services/audio/health.py
 COPY examples/xiaozhi/xiaozhi/xiaoai.py /app/xiaozhi/xiaoai.py
+COPY examples/xiaozhi/xiaozhi/event.py /app/xiaozhi/event.py
 COPY examples/xiaozhi/xiaozhi/services/audio/kws/__init__.py /app/xiaozhi/services/audio/kws/__init__.py
+COPY examples/xiaozhi/xiaozhi/services/audio/kws/sherpa.py /app/xiaozhi/services/audio/kws/sherpa.py
 ENV OPEN_XIAOAI_HEALTH_LOG=/app/logs/audio-health.jsonl
 
 FROM scratch AS client-artifact

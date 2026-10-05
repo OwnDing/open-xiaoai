@@ -57,6 +57,7 @@ python deploy/audio-health/compare.py speaker-health.jsonl bridge-health/audio-h
 ```sh
 docker build --target runtime -f deploy/audio-health/Dockerfile -t local/open-xiaoai-xiaozhi:audio-health .
 docker build --target client-artifact -f deploy/audio-health/Dockerfile --output type=local,dest=temp/audio-health-client .
+docker build --network none -f deploy/audio-health/Dockerfile.wake-lifecycle -t local/open-xiaoai-xiaozhi:wake-lifecycle .
 docker compose -f deploy/xiaozhi/docker-compose.yml up -d
 ```
 
@@ -69,3 +70,15 @@ docker compose -f deploy/xiaozhi/docker-compose.yml up -d
 ## 测试
 
 `test_health.py` 通过 `AUDIO_HEALTH_MODULE` 指定任一 Python 日志实现，测试断流窗口、序号缺失/乱序/重启、信号统计、状态读取不影响窗口、队列满/写盘失败及轮转。另运行两个语音程序的原有回归测试和后端 `test_audio_health.py`；音箱 Rust 库测试及目标架构构建验证 PCM 转换和录音逻辑兼容。
+
+## 对话超时后的再次唤醒
+
+20 秒没有收到语音时，桥接服务结束对话、停用 VAD 和对话音频流。告别播报及随后默认 300 ms 的余音保护期间暂停 KWS；`wakeup.exit_guard_ms` 可以调整这个保护时间。播报完成、失败或退出被取消时都会释放本次暂停；重叠的唤醒提示仍保留自己的暂停。
+
+恢复时，KWS 检测线程清理旧的输入缓冲并创建新的识别流，复用已经加载的 ONNX 模型。LISTENING/SPEAKING 后重新进入检测也执行同样的清理，避免把不连续的音频接到旧流上。解码期间收到暂停以及排队后已过期的命中都不会触发新会话。模型、关键词、阈值使用现有现场配置。
+
+健康日志记录以下阶段：`session_exit_start` → `session_exit_prompt_start` → `session_exit_prompt_end` → `session_exit_guard_end` → `session_exit_end` → `kws_reset`。禁用告别回调时跳过播报和余音保护；播报失败记 `session_exit_prompt_error`，取消记 `session_exit_cancelled`。`session_exit_end` 表示暂停已释放；实际清理完成以 `kws_reset.reason=session_exit` 为准，状态汇总中的 `kws_reset_pending` 用于检查是否仍有请求等待处理。
+
+`kws_reset.discarded_samples` 与 `window.mode_reset_samples` 表示恢复时丢弃的旧缓冲采样，属于有意清理；`kws_stale_hit` 表示过期命中被拦截；`kws_reset_error` 表示清理异常。现场验收应对照这些阶段，再测试“回答结束 → 20 秒无语音自动退出 → 再次说你好小七”。自动测试通过不能替代实际距离、音量和背景噪声下的唤醒验证。
+
+针对本次修补，运行 `examples/xiaozhi/tests/test_session_exit.py` 和 `test_kws_lifecycle.py`，并运行同目录的原有会话、VAD、TTS、重连测试。已有健康日志镜像可直接用 `Dockerfile.wake-lifecycle` 构建升级镜像，无需重新编译客户端或桥接 Rust 库；替换挂载的 Python 文件及 Compose 后，仅更新 `open-xiaoai-xiaozhi` 服务。

@@ -131,6 +131,7 @@ class XiaoAI:
             stream = getattr(kws, "stream", None)
             state = getattr(get_xiaozhi(), "device_state", None)
             return {"kws_paused": bool(getattr(kws, "paused", False)), "device_state": getattr(state, "name", str(state)),
+                    "kws_reset_pending": getattr(kws, "_reset_reason", None) is not None,
                     "kws_thread_alive": bool(getattr(kws, "thread", None) and kws.thread.is_alive()),
                     "kws_buffer_samples": len(getattr(stream, "input_bytes", [])) // 2}
         HEALTH.start(probe)
