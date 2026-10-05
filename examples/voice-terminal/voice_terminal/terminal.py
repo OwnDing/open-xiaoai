@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .audio import read_wav, refresh_devices
+from .audio import read_audio, refresh_devices, trim_silence
 from .codec import OpusDecoder, OpusEncoder
 from .config import TerminalConfig
 from .protocol import XiaozhiConnection
@@ -27,6 +27,7 @@ AUDIO_RETRY_SECONDS = 5.0
 class Mode:
     OFF = "off"  # mic ignored (playing, waiting for the server)
     WAKE = "wake"  # wake-word detection
+    GUARD = "guard"  # just played something: keep pre-roll, but its echo must not count as speech
     WAIT_SPEECH = "wait_speech"  # awake, waiting for the user to start talking
     STREAM = "stream"  # uploading the utterance
 
@@ -65,12 +66,24 @@ class FrameRouter:
         with self._lock:
             if mode == Mode.WAKE and self._wake is not None:
                 self._wake.reset()
+            elif mode == Mode.GUARD:
+                self._clear_ring()
             elif mode == Mode.WAIT_SPEECH:
                 self._speech.reset(in_utterance=False)
-                self._ring.clear()
-                self._ring_size = 0
+                if self.mode != Mode.GUARD:
+                    self._clear_ring()  # after a guard the ring holds speech that began early
                 self.peak = 0.0
             self.mode = mode
+
+    def _clear_ring(self):
+        self._ring.clear()
+        self._ring_size = 0
+
+    def _remember(self, frame):
+        self._ring.append(frame)
+        self._ring_size += len(frame)
+        while self._ring_size - len(self._ring[0]) >= self._ring_limit:
+            self._ring_size -= len(self._ring.popleft())
 
     @property
     def speech_max_prob(self) -> float:
@@ -84,12 +97,11 @@ class FrameRouter:
                     if word:
                         self.mode = Mode.OFF
                         self._post("wake", word)
+            elif self.mode == Mode.GUARD:
+                self._remember(frame)
             elif self.mode == Mode.WAIT_SPEECH:
                 self.peak = max(self.peak, float(np.max(np.abs(frame))))
-                self._ring.append(frame)
-                self._ring_size += len(frame)
-                while self._ring_size - len(self._ring[0]) >= self._ring_limit:
-                    self._ring_size -= len(self._ring.popleft())
+                self._remember(frame)
                 if "start" in self._speech.accept(frame):
                     self._encoder.reset()
                     packets = self._encoder.encode(np.concatenate(self._ring))
@@ -158,8 +170,8 @@ class Terminal:
         for name, freqs in DEFAULT_PROMPTS.items():
             path = getattr(session, f"{name}_prompt")
             if path:
-                samples, rate = read_wav(self.config.path(path))
-                prompts[name] = (samples, rate)
+                samples, rate = read_audio(self.config.path(path))
+                prompts[name] = (trim_silence(samples, rate), rate)
             else:
                 prompts[name] = (tone_prompt(freqs), PROMPT_RATE)
         return prompts
@@ -370,6 +382,11 @@ class Terminal:
         samples, rate = self._prompts[name]
         self.speaker.play(samples, rate)
         await self.speaker.drained()
+        await self._guard()
+
+    async def _guard(self):
+        """Let the speaker's echo die out before listening (audio is kept as pre-roll)."""
+        self.router.set_mode(Mode.GUARD)
         await asyncio.sleep(self.config.session.tts_end_guard_ms / 1000)
 
     async def _dialog_run(self, trigger, text, previous):
@@ -449,7 +466,7 @@ class Terminal:
         await self.speaker.drained()
         self._turn["played"] = time.monotonic()
         self._record_turn()
-        await asyncio.sleep(session.tts_end_guard_ms / 1000)
+        await self._guard()
         return "answered" if stopped else "timeout"
 
     def _record_turn(self):

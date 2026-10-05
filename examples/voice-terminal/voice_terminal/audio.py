@@ -68,6 +68,40 @@ def read_wav(path) -> tuple[np.ndarray, int]:
     return (data.reshape(-1, channels).mean(axis=1) / 32768.0).astype(np.float32), rate
 
 
+def read_audio(path) -> tuple[np.ndarray, int]:
+    """Mono float32 samples and rate from a 16-bit WAV or anything FFmpeg decodes (MP3, ...)."""
+    path = Path(path)
+    if path.suffix.lower() == ".wav":
+        return read_wav(path)
+    import av
+
+    with av.open(str(path)) as container:
+        stream = container.streams.audio[0]
+        rate = stream.rate
+        resampler = av.AudioResampler(format="flt", layout="mono", rate=rate)
+        chunks = []
+        for frame in container.decode(stream):
+            chunks += [f.to_ndarray().reshape(-1) for f in resampler.resample(frame)]
+        chunks += [f.to_ndarray().reshape(-1) for f in resampler.resample(None)]
+    return (np.concatenate(chunks) if chunks else np.zeros(0)).astype(np.float32), rate
+
+
+def trim_silence(samples: np.ndarray, rate: int, lead_ms: int = 30, tail_ms: int = 120,
+                 level_db: float = -45.0) -> np.ndarray:
+    """Cut leading/trailing silence (Edge pads prompts with ~0.2 s before and ~0.6 s after)."""
+    n = max(1, rate // 100)
+    frames = len(samples) // n
+    if frames == 0:
+        return samples
+    rms = np.sqrt(np.mean(samples[: frames * n].reshape(-1, n) ** 2, axis=1))
+    loud = np.flatnonzero(20 * np.log10(np.maximum(rms, 1e-9)) > level_db)
+    if not len(loud):
+        return samples
+    start = max(0, int(loud[0]) * n - rate * lead_ms // 1000)
+    end = min(len(samples), (int(loud[-1]) + 1) * n + rate * tail_ms // 1000)
+    return samples[start:end]
+
+
 def write_wav(path, samples: np.ndarray, rate: int):
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
@@ -331,7 +365,7 @@ class FileMicrophone:
     def start(self):
         clips = []
         for at, path in self._script:
-            samples, rate = read_wav(path)
+            samples, rate = read_audio(path)
             clips.append((at, soxr.resample(samples, rate, RATE).astype(np.float32) if rate != RATE else samples))
         self._running = True
         self._thread = threading.Thread(target=self._run, args=(clips,), name="file-mic", daemon=True)

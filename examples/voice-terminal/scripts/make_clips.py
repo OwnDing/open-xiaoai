@@ -1,13 +1,17 @@
-"""Synthesize test clips or terminal prompts with the deployed sherpa-tts.
+"""Synthesize test clips or terminal prompts with the deployed sherpa-tts or Edge TTS.
 
 Run inside a container on the backend's Docker network, e.g.
   docker cp scripts/make_clips.py xiaozhi-esp32-server:/tmp/
   docker exec xiaozhi-esp32-server python /tmp/make_clips.py /tmp/p05-clips
-  docker exec xiaozhi-esp32-server python /tmp/make_clips.py /tmp/prompts prompts
+  docker exec xiaozhi-esp32-server python /tmp/make_clips.py /tmp/prompts prompts --engine edge
+
+sherpa writes WAV; edge (edge_tts, already in the xiaozhi-server image) writes
+MP3 in --voice, which should match the voice the backend answers in.
 """
 
+import argparse
+import asyncio
 import json
-import sys
 import urllib.request
 import wave
 from pathlib import Path
@@ -46,11 +50,27 @@ def synthesize(text):
         return response.read(), rate
 
 
+async def synthesize_edge(text, voice, path):
+    import edge_tts
+
+    await edge_tts.Communicate(text, voice).save(str(path))
+
+
 def main():
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else "p05-clips")
-    clips = SETS[sys.argv[2] if len(sys.argv) > 2 else "p05"]
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("out", nargs="?", default="p05-clips")
+    parser.add_argument("set", nargs="?", default="p05", choices=sorted(SETS))
+    parser.add_argument("--engine", choices=("sherpa", "edge"), default="sherpa")
+    parser.add_argument("--voice", default="zh-CN-XiaoxiaoNeural", help="Edge voice")
+    args = parser.parse_args()
+    out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    for name, text in clips.items():
+    for name, text in SETS[args.set].items():
+        if args.engine == "edge":
+            path = out / f"{name}.mp3"
+            asyncio.run(synthesize_edge(text, args.voice, path))
+            print(f"{path.name} {path.stat().st_size} bytes ({args.voice})")
+            continue
         pcm, rate = synthesize(text)
         with wave.open(str(out / f"{name}.wav"), "wb") as w:
             w.setnchannels(1)

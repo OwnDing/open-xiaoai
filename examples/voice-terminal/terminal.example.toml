@@ -41,12 +41,15 @@ max_utterance_s = 15
 
 [session]
 idle_timeout_s = 20
-tts_end_guard_ms = 400
+# Echo of the speaker's own voice: ~210 ms round trip + ~500 ms room tail (Bluetooth).
+tts_end_guard_ms = 700
 no_reply_timeout_s = 6
 reply_timeout_s = 90
-wake_prompt = "prompts/wake.wav"
-no_reply_prompt = "prompts/no_reply.wav"
-goodbye_prompt = "prompts/goodbye.wav"
+# Made by scripts/fetch-assets.ps1 in the same Edge voice as the answers
+# (-PromptEngine sherpa makes WAV files in the Sherpa voice instead).
+wake_prompt = "prompts/wake.mp3"
+no_reply_prompt = "prompts/no_reply.mp3"
+goodbye_prompt = "prompts/goodbye.mp3"
 
 [control]
 host = "127.0.0.1"

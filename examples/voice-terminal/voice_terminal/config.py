@@ -51,13 +51,16 @@ class VadConfig:
 class SessionConfig:
     # No speech for this long after waking or after a reply: back to standby.
     idle_timeout_s: float = 20.0
-    # Keep the mic closed this long after playback ends (speaker echo tail).
-    tts_end_guard_ms: int = 400
+    # After playback, ignore the mic for speech detection this long (echo tail);
+    # audio heard meanwhile is still kept as pre-roll. A Bluetooth speaker's echo
+    # arrives ~210 ms after handoff and rings for another ~500 ms.
+    tts_end_guard_ms: int = 700
     # No recognition result this long after the user stopped talking: ask again.
     no_reply_timeout_s: float = 6.0
     # Recognized, but no answer started this long after: give up on this turn.
     reply_timeout_s: float = 90.0
-    # Prompt WAVs (any rate, mono or stereo); empty uses a built-in tone.
+    # Prompt audio (WAV or MP3, any rate); leading/trailing silence is trimmed.
+    # Empty uses a built-in tone. scripts/fetch-assets.ps1 makes them in the TTS voice.
     wake_prompt: str = ""
     no_reply_prompt: str = ""
     goodbye_prompt: str = ""

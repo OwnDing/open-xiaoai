@@ -22,7 +22,7 @@
 ```
 
 - 每个终端一个进程、一份配置、一个 `device_id`；要接多个设备就启动多个进程。
-- 轮流听说：播放时不收音（P0.5 测得这台蓝牙音箱没有回声消除）。
+- 轮流听说：播放时不收音（P0.5 测得这台蓝牙音箱没有回声消除）。播完后还有一段余音保护（`[session] tts_end_guard_ms`，默认 700 ms）：蓝牙音箱自己的回声约 210 ms 后才进麦克风，房间里还要再响约 500 ms；保护期间听到的声音不做开口判断，但会留作预录，抢着说话不会丢开头。
 - 播放端有自适应抖动缓冲（`[audio] playback_buffer_ms`，默认 240 ms）：服务端按实时节奏发音频，句间停顿之后每一包都是踩着点到的；缓冲播空后先攒够 240 ms 再播，避免一秒断十几次的“哧哧”声。`/status` 里的 `playback_underruns` 是播空次数。
 - 断线自动重连（后端空闲约 3 分钟会主动断开）；麦克风停止出数据时自动重开设备（蓝牙断开、重连）。
 
@@ -91,7 +91,7 @@ powershell -ExecutionPolicy Bypass -File scripts\fetch-assets.ps1
 copy terminal.example.toml terminal.toml
 ```
 
-`fetch-assets.ps1` 从小爱桥接容器复制唤醒和 VAD 模型到 `models\`，用已部署的 sherpa-tts 合成“我在。”等提示音到 `prompts\`。
+`fetch-assets.ps1` 从小爱桥接容器复制唤醒和 VAD 模型到 `models\`，并把“我在。”“我没听清，再说一遍？”“有需要再叫我。”三段提示音合成到 `prompts\`。默认用 Edge 晓晓生成 MP3，和 `EdgeStreamTTS` 的回答同一个音色；终端用 Sherpa 回答时加 `-PromptEngine sherpa` 生成 WAV，并把配置里的 `*_prompt` 改成 `.wav`。终端加载提示音时会自动裁掉头尾静音（Edge 的“我在”原本 1.2 s，裁后 0.6 s）。
 
 查看设备名，填进 `terminal.toml` 的 `[audio]`：
 
@@ -161,3 +161,4 @@ $env:VT_BACKEND_URL = 'ws://127.0.0.1:18100/xiaozhi/v1/'
 - Docker 虚拟机时钟偏慢（见上面的 `send_interval_ms`）。在虚拟机里把时钟源从 `tsc` 换成 `hyperv_clocksource_tsc_page` 或 `acpi_pm` 都没有改善，已改回 `tsc`。
 - Windows 11 的 `System32\onnxruntime.dll` 是旧版（1.17）。`sherpa-onnx-core` 必须安装（pyproject 已显式声明），否则 sherpa-onnx 会加载系统里的旧版并在创建模型时崩溃。
 - 在 PowerShell 5.1 里，`.ps1` 脚本要么全用 ASCII，要么存成带 BOM 的 UTF-8。
+- 问“你是哪台音箱”时，模型有时仍会说自己是客厅的小爱：线上 Hermes 的 `SOUL.md` 写的是“运行在一台小爱音箱上”。仓库里的 `deploy/hermes/profile/SOUL.md` 已改成多设备的说法，切换到单一后端时一起部署；按房间执行的指令不受影响。

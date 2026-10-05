@@ -18,9 +18,9 @@ model = "../models/silero_vad.onnx"
 
 [session]
 idle_timeout_s = 8
-wake_prompt = "../prompts/wake.wav"
-no_reply_prompt = "../prompts/no_reply.wav"
-goodbye_prompt = "../prompts/goodbye.wav"
+wake_prompt = "../prompts/wake.mp3"
+no_reply_prompt = "../prompts/no_reply.mp3"
+goodbye_prompt = "../prompts/goodbye.mp3"
 
 [control]
 port = 18111

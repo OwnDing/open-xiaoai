@@ -208,3 +208,66 @@ def test_playback_buffer_plays_short_complete_clips_and_clears():
     buf.push(np.ones(50, dtype=np.float32))
     buf.clear()
     assert buf.buffered == 0 and not buf.pull(10).any()
+
+
+def test_trim_silence_keeps_speech_and_short_margins():
+    from voice_terminal.audio import trim_silence
+
+    rate = 24000
+    tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(rate // 2) / rate)).astype(np.float32)
+    padded = np.concatenate([np.zeros(rate // 5, np.float32), tone, np.zeros(rate * 6 // 10, np.float32)])
+    trimmed = trim_silence(padded, rate)
+    assert abs(len(trimmed) - (len(tone) + rate * 150 // 1000)) <= rate // 100  # 30 ms + 120 ms margins
+    assert np.allclose(trim_silence(np.zeros(1000, np.float32), rate), 0)  # all silence: unchanged
+
+
+def test_read_audio_wav_and_mp3(tmp_path):
+    import av
+
+    from voice_terminal.audio import read_audio, write_wav
+
+    rate = 24000
+    tone = (0.3 * np.sin(2 * np.pi * 440 * np.arange(rate) / rate)).astype(np.float32)
+    write_wav(tmp_path / "t.wav", tone, rate)
+    samples, got_rate = read_audio(tmp_path / "t.wav")
+    assert got_rate == rate and len(samples) == rate
+
+    try:
+        av.codec.Codec("libmp3lame", "w")
+    except Exception:
+        pytest.skip("PyAV build has no MP3 encoder")
+    with av.open(str(tmp_path / "t.mp3"), "w") as out:
+        stream = out.add_stream("libmp3lame", rate=rate, layout="mono")
+        frame = av.AudioFrame.from_ndarray(tone.reshape(1, -1), format="flt", layout="mono")
+        frame.sample_rate = rate
+        for packet in stream.encode(frame):
+            out.mux(packet)
+        for packet in stream.encode(None):
+            out.mux(packet)
+    samples, got_rate = read_audio(tmp_path / "t.mp3")
+    assert got_rate == rate and abs(len(samples) - rate) < rate // 10
+    assert 0.15 < float(np.sqrt(np.mean(samples[2400:-2400] ** 2))) < 0.3
+
+
+def test_router_guard_keeps_early_speech_as_pre_roll():
+    posted = []
+    speech = FakeSpeech()
+    router = FrameRouter(FakeWake(), speech, OpusEncoder(), pre_roll_ms=600, post=lambda k, d: posted.append((k, d)))
+    frame = np.full(160, 0.1, dtype=np.float32)
+
+    router.set_mode(Mode.GUARD)
+    for _ in range(30):  # 300 ms heard during the echo guard: kept, but no VAD
+        router.on_frame(frame)
+    assert speech.resets == [] and posted == []
+    router.set_mode(Mode.WAIT_SPEECH)  # keeps the guard audio
+    speech.script = ["start"]
+    router.on_frame(frame)
+    kind, packets = posted[-1]
+    assert kind == "speech_start" and len(packets) == 5  # 310 ms -> five 60 ms packets
+
+    router.set_mode(Mode.OFF)
+    router.on_frame(frame)
+    router.set_mode(Mode.WAIT_SPEECH)  # not after a guard: starts empty
+    speech.script = ["start"]
+    router.on_frame(frame)
+    assert posted[-1] == ("speech_start", [])  # 10 ms is less than one packet
