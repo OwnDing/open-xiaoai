@@ -127,11 +127,12 @@ class KWSLifecycleTests(unittest.IsolatedAsyncioTestCase):
         model = _SherpaOnnx()
         old_stream = object()
         new_stream = object()
-        model.stream = old_stream
+        model.offsets = [0]
+        model.streams = [old_stream]
         model.keyword_spotter = Mock()
         model.keyword_spotter.create_stream.return_value = new_stream
         model.reset()
-        self.assertIs(model.stream, new_stream)
+        self.assertEqual(model.streams, [new_stream])
         model.keyword_spotter.create_stream.assert_called_once()
 
 
