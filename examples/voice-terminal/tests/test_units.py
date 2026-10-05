@@ -179,3 +179,32 @@ def test_control_api():
         assert target.calls == [("text", "现在几点了"), ("manual", ""), ("stop", "")]
 
     asyncio.run(scenario())
+
+
+def test_playback_buffer_waits_for_threshold_and_refills():
+    from voice_terminal.audio import _PlaybackBuffer
+
+    buf = _PlaybackBuffer(threshold=100)
+    ones = np.ones(60, dtype=np.float32)
+    buf.push(ones)
+    assert not buf.pull(10).any()  # 60 < 100 queued: still filling
+    buf.push(ones)
+    assert buf.pull(120).all() and buf.buffered == 0  # 120 >= 100: plays all of it
+    assert buf.underruns == 1  # ran dry mid-answer
+    buf.push(ones)
+    assert not buf.pull(10).any()  # refilling again after running dry
+    buf.push(ones, complete=True)
+    out = buf.pull(200)
+    assert out[:120].all() and not out[120:].any()
+    assert buf.underruns == 1  # the end of a complete clip is not an underrun
+
+
+def test_playback_buffer_plays_short_complete_clips_and_clears():
+    from voice_terminal.audio import _PlaybackBuffer
+
+    buf = _PlaybackBuffer(threshold=1000)
+    buf.push(np.ones(50, dtype=np.float32), complete=True)  # a short prompt
+    assert buf.pull(50).all()
+    buf.push(np.ones(50, dtype=np.float32))
+    buf.clear()
+    assert buf.buffered == 0 and not buf.pull(10).any()

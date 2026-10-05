@@ -54,6 +54,7 @@ class SpeechDetector:
         self._silence = 0  # continuous silence samples
         self._voiced = 0  # speech samples inside the current utterance
         self._length = 0  # samples since the utterance started
+        self.max_prob = 0.0  # diagnostics: highest speech probability since reset
 
     def _required_silence(self) -> float:
         voiced_ms = self.config.min_speech_ms + self._voiced * 1000 / RATE
@@ -66,7 +67,9 @@ class SpeechDetector:
         events = []
         while len(self._pending) >= WINDOW:
             window, self._pending = self._pending[:WINDOW], self._pending[WINDOW:]
-            speech = self.model(window) >= self.config.threshold
+            prob = self.model(window)
+            self.max_prob = max(self.max_prob, prob)
+            speech = prob >= self.config.threshold
             if speech:
                 self._speech += WINDOW
                 self._silence = 0

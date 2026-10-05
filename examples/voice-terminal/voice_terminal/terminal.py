@@ -59,6 +59,7 @@ class FrameRouter:
         self._ring_size = 0
         self._lock = threading.Lock()
         self.mode = Mode.OFF
+        self.peak = 0.0  # diagnostics: loudest sample since entering WAIT_SPEECH
 
     def set_mode(self, mode: str):
         with self._lock:
@@ -68,7 +69,12 @@ class FrameRouter:
                 self._speech.reset(in_utterance=False)
                 self._ring.clear()
                 self._ring_size = 0
+                self.peak = 0.0
             self.mode = mode
+
+    @property
+    def speech_max_prob(self) -> float:
+        return getattr(self._speech, "max_prob", 0.0)
 
     def on_frame(self, frame: np.ndarray):
         with self._lock:
@@ -79,6 +85,7 @@ class FrameRouter:
                         self.mode = Mode.OFF
                         self._post("wake", word)
             elif self.mode == Mode.WAIT_SPEECH:
+                self.peak = max(self.peak, float(np.max(np.abs(frame))))
                 self._ring.append(frame)
                 self._ring_size += len(frame)
                 while self._ring_size - len(self._ring[0]) >= self._ring_limit:
@@ -263,6 +270,7 @@ class Terminal:
                 if self.conn is None:
                     continue
                 if event.kind == "speech_start":
+                    log.info("speech start")
                     await self.conn.listen_start("manual")
                     for packet in event.data:
                         await self.conn.send_audio(packet)
@@ -271,6 +279,7 @@ class Terminal:
                     for packet in event.data:
                         await self.conn.send_audio(packet)
                 elif event.kind == "speech_end":
+                    log.info("speech end")
                     await self.conn.listen_stop()
                     self._events.put_nowait(event)
             except ConnectionError:
@@ -393,7 +402,11 @@ class Terminal:
                 self.router.set_mode(Mode.WAIT_SPEECH)
                 event = await self._wait({"speech_start", "tts_start"}, session.idle_timeout_s)
                 if event is None:
-                    log.info("no speech for %.0f s; standby", session.idle_timeout_s)
+                    log.info(
+                        "no speech for %.0f s; standby (max speech prob %.2f, mic peak %.1f dBFS)",
+                        session.idle_timeout_s, self.router.speech_max_prob,
+                        20 * np.log10(max(self.router.peak, 1e-9)),
+                    )
                     await self._play_prompt("goodbye")
                     break
                 if event.kind == "tts_start":
@@ -459,5 +472,6 @@ class Terminal:
             "audio_ok": self._audio_ok,
             "mic": getattr(self.mic, "name", ""),
             "speaker": self.speaker.name,
+            "playback_underruns": getattr(self.speaker, "underruns", 0),
             **self.stats,
         }

@@ -22,6 +22,8 @@ class AudioConfig:
     # Front-end stages on the 16 kHz mic signal: "hpf", "ns", "agc".
     frontend: list[str] = field(default_factory=lambda: ["hpf", "ns", "agc"])
     output_gain: float = 1.0
+    # Jitter buffer: after running dry, queue this much before playing again.
+    playback_buffer_ms: int = 240
 
 
 @dataclass

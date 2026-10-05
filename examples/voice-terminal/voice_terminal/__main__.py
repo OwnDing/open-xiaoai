@@ -38,7 +38,7 @@ def _run(args):
         def make_mic(on_frame):
             return Microphone(config.audio.input, config.audio.host_api, frontend, on_frame)
 
-    speaker = FileSpeaker(args.output_file) if args.output_file else Speaker(config.audio.output, config.audio.host_api, config.audio.output_gain)
+    speaker = FileSpeaker(args.output_file) if args.output_file else Speaker(config.audio.output, config.audio.host_api, config.audio.output_gain, config.audio.playback_buffer_ms)
     terminal = Terminal(config, make_mic, speaker, wake, speech)
 
     async def main():

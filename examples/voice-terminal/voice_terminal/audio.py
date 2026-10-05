@@ -167,32 +167,61 @@ class Microphone:
 
 
 class _PlaybackBuffer:
-    def __init__(self):
+    """Jitter buffer between network audio and the device callback.
+
+    The server paces TTS packets in real time, and after a pause between
+    sentences each packet arrives just as it is due. Playing them one by one
+    then runs dry dozens of times per second (heard as crackle), so whenever
+    the buffer is empty it waits until `threshold` samples are queued before
+    playing again. A clip marked complete (prompts, end of an answer) plays
+    out without waiting.
+    """
+
+    def __init__(self, threshold: int = 0):
         self._chunks = collections.deque()
         self._lock = threading.Lock()
+        self.threshold = threshold
         self.buffered = 0
         self.last_handoff = 0.0
+        self.underruns = 0
+        self._waiting = True  # refilling: output silence until threshold
+        self._complete = False  # no more audio coming for the current clip
 
-    def push(self, samples: np.ndarray):
-        if len(samples):
-            with self._lock:
+    def push(self, samples: np.ndarray, complete: bool = False):
+        with self._lock:
+            if len(samples):
                 self._chunks.append(samples)
                 self.buffered += len(samples)
+            if complete:
+                self._complete = True
+
+    def mark_complete(self):
+        with self._lock:
+            self._complete = True
 
     def pull(self, count: int) -> np.ndarray:
         out = np.zeros(count, dtype=np.float32)
         filled = 0
         with self._lock:
-            while filled < count and self._chunks:
-                chunk = self._chunks[0]
-                take = min(count - filled, len(chunk))
-                out[filled:filled + take] = chunk[:take]
-                filled += take
-                if take == len(chunk):
-                    self._chunks.popleft()
-                else:
-                    self._chunks[0] = chunk[take:]
-            self.buffered -= filled
+            if self._waiting and (self.buffered >= self.threshold or (self._complete and self.buffered)):
+                self._waiting = False
+            if not self._waiting:
+                while filled < count and self._chunks:
+                    chunk = self._chunks[0]
+                    take = min(count - filled, len(chunk))
+                    out[filled:filled + take] = chunk[:take]
+                    filled += take
+                    if take == len(chunk):
+                        self._chunks.popleft()
+                    else:
+                        self._chunks[0] = chunk[take:]
+                self.buffered -= filled
+                if self.buffered == 0:
+                    if not self._complete:
+                        self.underruns += 1
+                    # Refill before playing whatever comes next.
+                    self._waiting = True
+                    self._complete = False
         if filled:
             self.last_handoff = time.monotonic()
         return out
@@ -201,13 +230,16 @@ class _PlaybackBuffer:
         with self._lock:
             self._chunks.clear()
             self.buffered = 0
+            self._waiting = True
+            self._complete = False
 
 
 class Speaker:
     """Persistent output stream fed with 48 kHz mono float32 PCM."""
 
-    def __init__(self, spec: str, host_api: str, gain: float = 1.0):
+    def __init__(self, spec: str, host_api: str, gain: float = 1.0, buffer_ms: int = 240):
         self.spec, self.host_api, self.gain = spec, host_api, gain
+        self.buffer_ms = buffer_ms
         self._buffer = _PlaybackBuffer()
         self._stream = None
         self._resampler = None
@@ -222,6 +254,7 @@ class Speaker:
         dev = sd.query_devices(index)
         self.name, self.rate = dev["name"], int(dev["default_samplerate"])
         self.channels = min(2, dev["max_output_channels"])
+        self._buffer.threshold = int(self.buffer_ms * self.rate / 1000)
         self._resampler = soxr.ResampleStream(PLAYBACK_SOURCE_RATE, self.rate, 1, dtype="float32", quality="HQ")
         self._stream = sd.OutputStream(
             device=index, samplerate=self.rate, channels=self.channels, dtype="float32",
@@ -239,12 +272,18 @@ class Speaker:
         self._buffer.push(self._resampler.resample_chunk(pcm48 * self.gain))
 
     def end_stream(self):
-        self._buffer.push(self._resampler.resample_chunk(np.zeros(0, dtype=np.float32), last=True))
+        """No more audio for this answer: play out what is buffered."""
+        tail = self._resampler.resample_chunk(np.zeros(0, dtype=np.float32), last=True)
+        self._buffer.push(tail, complete=True)
         self._resampler.clear()
 
     def play(self, samples: np.ndarray, rate: int):
         """Queue a complete clip (prompt) at any rate."""
-        self._buffer.push(soxr.resample(samples * self.gain, rate, self.rate).astype(np.float32))
+        self._buffer.push(soxr.resample(samples * self.gain, rate, self.rate).astype(np.float32), complete=True)
+
+    @property
+    def underruns(self) -> int:
+        return self._buffer.underruns
 
     def flush(self):
         self._buffer.clear()

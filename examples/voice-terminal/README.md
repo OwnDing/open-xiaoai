@@ -23,6 +23,7 @@
 
 - 每个终端一个进程、一份配置、一个 `device_id`；要接多个设备就启动多个进程。
 - 轮流听说：播放时不收音（P0.5 测得这台蓝牙音箱没有回声消除）。
+- 播放端有自适应抖动缓冲（`[audio] playback_buffer_ms`，默认 240 ms）：服务端按实时节奏发音频，句间停顿之后每一包都是踩着点到的；缓冲播空后先攒够 240 ms 再播，避免一秒断十几次的“哧哧”声。`/status` 里的 `playback_underruns` 是播空次数。
 - 断线自动重连（后端空闲约 3 分钟会主动断开）；麦克风停止出数据时自动重开设备（蓝牙断开、重连）。
 
 ## 后端：按设备配置
@@ -36,7 +37,22 @@ voice_devices:
     tts: EdgeTTS              # 可选：TTS 下的任意模块名，不写用 selected_module.TTS
     room: 书房                # 可选：Home Assistant 区域名
     reply_style: sentence     # 可选：sentence = 至少一句完整的话；也可以直接写一句要求
+    send_interval_ms: 50      # 可选：服务端音频包（每包 60 ms）的发送间隔，见下
 ```
+
+流式 Edge（推荐给电脑终端）：在 `TTS` 下加一个模块，设备里写 `tts: EdgeStreamTTS`：
+
+```yaml
+TTS:
+  EdgeStreamTTS:
+    type: edge_stream         # deploy/sherpa-tts/xiaozhi-server-overrides/edge_stream.py
+    voice: zh-CN-XiaoxiaoNeural
+    output_dir: tmp/
+```
+
+它和自带的 `EdgeTTS` 相比：连接预先建好、多句复用（省掉每句约 0.6 s 的建连），MP3 边收边用 ffmpeg 解码边发送，第一段在第一个标点处切出，并把 Edge 每句头尾约 0.75 s 的静音裁到约 0.3 s。实测说完到开始出声的中位数：自带 EdgeTTS 2.14 s，流式 1.17 s（Sherpa 约 1.36 s）。还没出声就失败的句子会自动改用自带 EdgeTTS 重试。
+
+`send_interval_ms`：这台 mini PC 上 Docker 虚拟机的时钟比真实时间慢约 7.7%，服务端按“每 60 ms 一包”发送，实际变成每 65 ms 一包，比音箱播放慢，长回答每隔约 3 s 就会播空一次（听起来是句中停顿）。给终端配 50，让服务端提前一点发，终端的缓冲会兜住。
 
 - `room`：后端在系统提示词的上下文里加一行“Device room: 书房（……没说房间的指令指的就是书房）”。问“这个房间的灯开着吗”就查书房灯。
 - `reply_style: sentence`：避免只回一个字（Sherpa 合成单字很难听清）。
@@ -141,6 +157,7 @@ $env:VT_BACKEND_URL = 'ws://127.0.0.1:18100/xiaozhi/v1/'
 - **京鱼座蓝牙小黑胶的麦克风只有 8 kHz 窄带**，打开麦克风后播放也降为通话音质。指令识别可用，唤醒在安静环境 1 米内单独说可以触发，远场和噪声下不稳定。换 USB 麦克风或支持宽带语音的音箱可以改善。
 - **远程桌面连着时，本机蓝牙音箱没声音**：所有程序都一样，包括以 SYSTEM 运行的终端；断开远程桌面就恢复。远程桌面客户端的“远程音频”要设成“在远程计算机上播放”（mstsc：本地资源 → 远程音频 → 设置；Mac 的 Windows App / Microsoft Remote Desktop：Play sound → On the remote PC）。
 - Sherpa TTS 合成单字（如“二”）只有约 0.3 s 声音，很难听清；给设备配置 `reply_style: sentence` 后，回答会变成“一加一等于二”这样的完整句子。
-- Edge TTS 是在线合成，按句整段生成，说完后约 2.6 s 才开始出声（Sherpa 约 0.9 s）；断网时这台设备没有语音回答，目前没有自动退回 Sherpa。
+- Edge TTS 需要联网；断网时配了 Edge 的设备没有语音回答（流式 Edge 会先退回自带 EdgeTTS 重试，同样要联网），目前没有自动退回 Sherpa。
+- Docker 虚拟机时钟偏慢（见上面的 `send_interval_ms`）。在虚拟机里把时钟源从 `tsc` 换成 `hyperv_clocksource_tsc_page` 或 `acpi_pm` 都没有改善，已改回 `tsc`。
 - Windows 11 的 `System32\onnxruntime.dll` 是旧版（1.17）。`sherpa-onnx-core` 必须安装（pyproject 已显式声明），否则 sherpa-onnx 会加载系统里的旧版并在创建模型时崩溃。
 - 在 PowerShell 5.1 里，`.ps1` 脚本要么全用 ASCII，要么存成带 BOM 的 UTF-8。

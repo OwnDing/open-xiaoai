@@ -19,6 +19,8 @@ host_api = "WASAPI"
 # P0.5 corpus: high-pass + WebRTC noise suppression + gain did best on this mic.
 frontend = ["hpf", "ns", "agc"]
 output_gain = 1.0
+# After the speaker runs dry, queue this much before playing again (avoids crackle).
+playback_buffer_ms = 240
 
 [wake]
 keywords = ["你好小七"]
