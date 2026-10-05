@@ -15,6 +15,7 @@ use open_xiaoai::services::connect::message::{MessageManager, WsStream};
 use open_xiaoai::services::connect::rpc::RPC;
 use open_xiaoai::services::monitor::instruction::InstructionMonitor;
 use open_xiaoai::services::monitor::playing::PlayingMonitor;
+use open_xiaoai::utils::audio_health::emit;
 
 struct AppClient {
     kws_monitor: KwsMonitor,
@@ -40,16 +41,22 @@ impl AppClient {
         let url = std::env::args().nth(1).expect("❌ 请输入服务器地址");
         println!("✅ 已启动");
         loop {
-            let Ok(ws_stream) = self.connect(&url).await else {
-                sleep(Duration::from_secs(1)).await;
-                continue;
+            let ws_stream = match self.connect(&url).await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    emit("connect_error", json!({"error": error.to_string()}));
+                    sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
             };
+            emit("connected", json!({}));
             println!("✅ 已连接: {:?}", url);
             self.init(ws_stream).await;
             if let Err(e) = MessageManager::instance().process_messages().await {
                 eprintln!("❌ 消息处理异常: {}", e);
             }
             self.dispose().await;
+            emit("disconnected", json!({}));
             eprintln!("❌ 已断开连接");
         }
     }
@@ -130,9 +137,9 @@ async fn start_recording(request: Request) -> Result<Response, AppError> {
         .and_then(|payload| serde_json::from_value::<AudioConfig>(payload).ok());
     AudioRecorder::instance()
         .start_recording(
-            |bytes| async {
+            |bytes, meta| async {
                 MessageManager::instance()
-                    .send_stream("record", bytes, None)
+                    .send_stream("record", bytes, Some(meta))
                     .await
             },
             config,

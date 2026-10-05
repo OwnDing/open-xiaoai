@@ -1,3 +1,4 @@
+pub mod audio_health;
 pub mod event;
 pub mod rand;
 pub mod shell;

@@ -144,6 +144,13 @@ class Microphone:
         self.overflows = 0
         self.dropped = 0
         self.last_callback = 0.0
+        self.started_at = time.monotonic()
+        self.callback_samples = 0
+        self.processed_samples = 0
+        self.worker_errors = 0
+        self.queue_peak = 0
+        self.max_callback_gap_ms = 0.0
+        self.max_queue_age_ms = 0.0
 
     def start(self):
         sd = _sd()
@@ -163,24 +170,43 @@ class Microphone:
         log.info("mic [%d] %s @ %d Hz", index, self.name, self.rate)
 
     def _callback(self, indata, frames, _time, status):
-        self.last_callback = time.monotonic()
+        now = time.monotonic()
+        if self.last_callback:
+            self.max_callback_gap_ms = max(self.max_callback_gap_ms, (now-self.last_callback)*1000)
+        self.last_callback = now
+        self.callback_samples += frames
         if status.input_overflow:
             self.overflows += 1
         try:
-            self._queue.put_nowait(indata[:, 0].copy())
+            self._queue.put_nowait((now, indata[:, 0].copy()))
+            self.queue_peak = max(self.queue_peak, self._queue.qsize())
         except queue.Full:
             self.dropped += frames
 
     def _work(self, cutter):
         while self._running:
             try:
-                chunk = self._queue.get(timeout=0.2)
+                captured_at, chunk = self._queue.get(timeout=0.2)
             except queue.Empty:
                 continue
             try:
+                self.max_queue_age_ms = max(self.max_queue_age_ms, (time.monotonic()-captured_at)*1000)
                 cutter.push(chunk)
+                self.processed_samples += len(chunk)
             except Exception:
+                self.worker_errors += 1
                 log.exception("mic frame processing failed")
+
+    def health(self):
+        return {"mic_rate_hz": self.rate, "mic": self.name,
+                "mic_callback_samples_total": self.callback_samples,
+                "mic_processed_samples_total": self.processed_samples,
+                "mic_overflows_total": self.overflows, "mic_dropped_samples_total": self.dropped,
+                "mic_worker_errors_total": self.worker_errors,
+                "mic_callback_age_ms": (time.monotonic()-self.last_callback)*1000 if self.last_callback else None,
+                "mic_worker_alive": bool(self._worker and self._worker.is_alive()),
+                "mic_queue_chunks": self._queue.qsize(), "mic_queue_peak_chunks": self.queue_peak,
+                "mic_max_queue_age_ms": self.max_queue_age_ms, "mic_max_callback_gap_ms": self.max_callback_gap_ms}
 
     @property
     def stalled(self) -> bool:

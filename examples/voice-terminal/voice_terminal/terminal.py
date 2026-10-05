@@ -13,6 +13,7 @@ from .audio import read_audio, refresh_devices, trim_silence
 from .codec import OpusDecoder, OpusEncoder
 from .config import TerminalConfig
 from .protocol import XiaozhiConnection
+from .health import HealthLog
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +53,8 @@ class FrameRouter:
     """Runs on the mic thread; posts ("wake", word), ("speech_start", packets),
     ("audio", packets) and ("speech_end", None) to the event loop in order."""
 
-    def __init__(self, wake, speech, encoder: OpusEncoder, pre_roll_ms: int, post):
+    def __init__(self, wake, speech, encoder: OpusEncoder, pre_roll_ms: int, post, health=None):
+        self.health = health
         self._wake, self._speech, self._encoder = wake, speech, encoder
         self._post = post
         self._ring = collections.deque()
@@ -74,6 +76,8 @@ class FrameRouter:
                     self._clear_ring()  # after a guard the ring holds speech that began early
                 self.peak = 0.0
             self.mode = mode
+            if self.health:
+                self.health.emit("router_mode", mode=mode)
 
     def _clear_ring(self):
         self._ring.clear()
@@ -90,10 +94,24 @@ class FrameRouter:
         return getattr(self._speech, "max_prob", 0.0)
 
     def on_frame(self, frame: np.ndarray):
+        if self.health:
+            self.health.pcm(frame)
         with self._lock:
+            if self.health and self.mode != Mode.WAKE:
+                self.health.kws(len(frame), self.mode)
             if self.mode == Mode.WAKE:
+                if self._wake is None and self.health:
+                    self.health.kws(len(frame), "disabled")
                 if self._wake is not None:
-                    word = self._wake.accept(frame)
+                    started = time.monotonic()
+                    try:
+                        word = self._wake.accept(frame)
+                    except Exception:
+                        if self.health:
+                            self.health.kws(len(frame), "active", time.monotonic()-started, error=True)
+                        raise
+                    if self.health:
+                        self.health.kws(len(frame), "active", time.monotonic()-started, hit=bool(word))
                     if word:
                         self.mode = Mode.OFF
                         self._post("wake", word)
@@ -147,7 +165,9 @@ class Terminal:
         self._connection_factory = connection_factory
         self.speaker = speaker
         self.mic = None
-        self.router = FrameRouter(wake_detector, speech_detector, OpusEncoder(), config.vad.pre_roll_ms, self._post_from_mic)
+        self.health = HealthLog("terminal", config.device_id, config.path("logs/audio-health.jsonl"))
+        self._health_send_task = None
+        self.router = FrameRouter(wake_detector, speech_detector, OpusEncoder(), config.vad.pre_roll_ms, self._post_from_mic, self.health)
         self._decoder = OpusDecoder()
         self.conn: XiaozhiConnection | None = None
         self.state = State.CONNECTING
@@ -184,15 +204,18 @@ class Terminal:
             self.speaker.start()
             self.mic = self._make_mic(self.router.on_frame)
             self.mic.start()
+            self.health.emit("capture_start", **getattr(self.mic, "health", lambda: {})())
             self._audio_ok = True
             return True
         except Exception as exc:
+            self.health.emit("capture_start_error", error=type(exc).__name__, message=str(exc))
             log.warning("audio devices unavailable: %s", exc)
             self._stop_audio()
             return False
 
     def _stop_audio(self):
         if self.mic is not None:
+            self.health.emit("capture_stop", **getattr(self.mic, "health", lambda: {})())
             self.mic.stop()
             self.mic = None
         self.speaker.stop()
@@ -200,6 +223,10 @@ class Terminal:
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
+        self.health.start(self._health_probe, self._health_observer)
+        self.health.emit("wake_config", enabled=self.router._wake is not None,
+                         keywords_score=self.config.wake.score,
+                         keywords_threshold=self.config.wake.threshold)
         self._start_audio()
         tasks = [
             asyncio.create_task(self._uplink_loop(), name="uplink"),
@@ -216,6 +243,33 @@ class Terminal:
             if self.conn is not None:
                 await self.conn.close()
             self._stop_audio()
+            if self._health_send_task is not None:
+                self._health_send_task.cancel()
+                await asyncio.gather(self._health_send_task, return_exceptions=True)
+            self.health.close()
+
+    def _health_probe(self):
+        return {"state": self.state, "mode": self.router.mode, "connected": bool(self.conn and self.conn.is_open),
+                "audio_ok": self._audio_ok, "uplink_queue_events": self._uplink.qsize(),
+                "reconnects_total": self.stats["reconnects"], **getattr(self.mic, "health", lambda: {})()}
+
+    def _health_observer(self, summary):
+        if self.loop and not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(self._queue_health_summary, summary)
+
+    def _queue_health_summary(self, summary):
+        if self._health_send_task is None or self._health_send_task.done():
+            self._health_send_task = asyncio.create_task(self._send_health_summary(summary))
+        else:
+            self.health.count("health_mirror_dropped")
+
+    async def _send_health_summary(self, summary):
+        conn = self.conn
+        if conn and conn.is_open and hasattr(conn, "send_json"):
+            try:
+                await asyncio.wait_for(conn.send_json({"type": "audio_health", "health": summary}), timeout=1.0)
+            except Exception:
+                self.health.count("health_mirror_errors")
 
     def shutdown(self):
         self._stopping.set()
@@ -226,6 +280,7 @@ class Terminal:
             if self._audio_ok and not (self.mic is not None and self.mic.stalled):
                 continue
             if self._audio_ok:
+                self.health.emit("capture_stalled", **self._health_probe())
                 log.warning("microphone stalled; reopening audio devices")
                 await self.stop_dialog(notify_server=True)
             self._stop_audio()
@@ -255,11 +310,13 @@ class Terminal:
                 continue
             delay = 1.0
             self.conn = conn
+            self.health.emit("connected")
             if self._dialog is None:
                 self.state = State.STANDBY
                 self.router.set_mode(Mode.WAKE)
             await conn.closed.wait()
             self.conn = None
+            self.health.emit("disconnected")
             self.stats["reconnects"] += 1
             if self._dialog is not None:
                 log.warning("connection lost during a conversation; back to standby")
@@ -487,6 +544,7 @@ class Terminal:
             "mode": self.router.mode,
             "connected": self.conn is not None and self.conn.is_open,
             "audio_ok": self._audio_ok,
+            "audio_health": self.health.peek(),
             "mic": getattr(self.mic, "name", ""),
             "speaker": self.speaker.name,
             "playback_underruns": getattr(self.speaker, "underruns", 0),

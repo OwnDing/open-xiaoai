@@ -7,10 +7,12 @@ use open_xiaoai::services::connect::message::{MessageManager, WsStream};
 use open_xiaoai::services::connect::rpc::RPC;
 use open_xiaoai::services::speaker::SpeakerManager;
 use open_xiaoai::utils::task::TaskManager;
-use pyo3::types::PyBytes;
+use pyo3::prelude::*;
 use pyo3::types::PyString;
+use pyo3::types::{PyBytes, PyTuple};
 use pyo3::Python;
 use serde_json::json;
+use std::time::Instant;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{sleep, Duration};
 use tokio_tungstenite::accept_async;
@@ -43,15 +45,24 @@ async fn audio_watchdog() {
         .await;
 
     loop {
-        if let Err(error) = RPC::instance()
-            .call_remote(
-                "start_recording",
-                Some(recording_config.clone()),
-                Some(3_000),
-            )
-            .await
         {
-            crate::pylog!("⚠️ 录音健康检查失败: {}", error);
+            let started = Instant::now();
+            let result = RPC::instance()
+                .call_remote(
+                    "start_recording",
+                    Some(recording_config.clone()),
+                    Some(3_000),
+                )
+                .await;
+            health_event(
+                "recording_rpc",
+                json!({"ok": result.is_ok(),
+            "duration_ms": started.elapsed().as_secs_f64()*1000.0,
+            "error": result.as_ref().err().map(|e| e.to_string())}),
+            );
+            if let Err(error) = result {
+                crate::pylog!("⚠️ 录音健康检查失败: {}", error);
+            }
         }
         sleep(Duration::from_secs(5)).await;
     }
@@ -80,12 +91,14 @@ impl AppServer {
             crate::pylog!("❌ 连接异常: {}", addr);
             return;
         };
+        health_event("connected", json!({"peer": addr.to_string()}));
         crate::pylog!("✅ 已连接: {:?}", addr);
         AppServer::init(ws_stream).await;
         if let Err(e) = MessageManager::instance().process_messages().await {
             crate::pylog!("❌ 消息处理异常: {}", e);
         }
         AppServer::dispose().await;
+        health_event("disconnected", json!({}));
         crate::pylog!("❌ 已断开连接");
     }
 
@@ -129,11 +142,29 @@ async fn get_version(_: Request) -> Result<Response, AppError> {
 }
 
 async fn on_stream(stream: Stream) -> Result<(), AppError> {
-    let Stream { tag, bytes, .. } = stream;
+    let Stream {
+        tag,
+        bytes,
+        data: metadata,
+        ..
+    } = stream;
     match tag.as_str() {
         "record" => {
-            let data = Python::with_gil(|py| PyBytes::new(py, &bytes).into());
-            PythonManager::instance().call_fn("on_input_data", Some(data))?;
+            let metadata = serde_json::to_string(&metadata)?;
+            let data = Python::with_gil(|py| -> PyResult<PyObject> {
+                Ok(PyTuple::new(
+                    py,
+                    [
+                        PyBytes::new(py, &bytes).into_any(),
+                        PyString::new(py, &metadata).into_any(),
+                    ],
+                )?
+                .into())
+            })?;
+            if let Err(error) = PythonManager::instance().call_fn("on_input_packet", Some(data)) {
+                health_event("input_callback_error", json!({"error": error.to_string()}));
+                return Err(error.into());
+            }
         }
         _ => {}
     }
@@ -145,4 +176,10 @@ async fn on_event(event: Event) -> Result<(), AppError> {
     let data = Python::with_gil(|py| PyString::new(py, &event_json).into());
     PythonManager::instance().call_fn("on_event", Some(data))?;
     Ok(())
+}
+
+fn health_event(event: &str, fields: serde_json::Value) {
+    let data = json!({"event": event, "fields": fields}).to_string();
+    let arg = Python::with_gil(|py| PyString::new(py, &data).into());
+    let _ = PythonManager::instance().call_fn("on_health_event", Some(arg));
 }

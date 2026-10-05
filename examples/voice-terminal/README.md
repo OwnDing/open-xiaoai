@@ -114,7 +114,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install-task.ps1 -Config termin
 powershell -ExecutionPolicy Bypass -File scripts\install-task.ps1 -Config terminal.toml -Remove
 ```
 
-日志：`logs\terminal.log`（1 MB 滚动，保留 5 个）。
+日志：`logs\terminal.log`（1 MB 滚动，保留 5 个）。采集与唤醒健康统计另写 `logs\audio-health.jsonl`，每 10 秒汇总，后端同步留档；查看字段、两端对照及导出方法见 [语音采集健康日志](../../deploy/audio-health/README.md)。
 
 ## 本地控制接口
 

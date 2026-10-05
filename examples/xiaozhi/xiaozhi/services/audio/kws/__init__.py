@@ -5,6 +5,7 @@ import time
 
 from config import APP_CONFIG
 from xiaozhi.event import EventManager
+from xiaozhi.services.audio.health import HEALTH
 from xiaozhi.ref import get_xiaozhi, set_kws
 from xiaozhi.services.audio.kws.sherpa import SherpaOnnx
 from xiaozhi.services.audio.stream import MyAudio
@@ -41,12 +42,19 @@ class _KWS:
 
     def pause(self):
         self.paused = True
+        HEALTH.emit("kws_pause")
 
     def resume(self):
         self.paused = False
+        HEALTH.emit("kws_resume")
 
     def _detection_loop(self):
-        SherpaOnnx.start()
+        try:
+            SherpaOnnx.start()
+            HEALTH.emit("kws_ready")
+        except Exception as exc:
+            HEALTH.emit("kws_init_error", error=type(exc).__name__)
+            raise
         self.stream.start_stream()
         while True:
             # 读取缓冲区音频数据
@@ -54,20 +62,24 @@ class _KWS:
                 AudioConfig.FRAME_SIZE, exception_on_overflow=False
             )
 
-            # 在说话和监听状态时，暂停 KWS
-            if (
-                not frames
-                or self.paused
-                or get_xiaozhi().device_state
-                in [
-                    DeviceState.LISTENING,
-                    DeviceState.SPEAKING,
-                ]
-            ):
+            state = get_xiaozhi().device_state
+            mode = "paused" if self.paused else (getattr(state, "name", str(state)).lower()
+                if state in [DeviceState.LISTENING, DeviceState.SPEAKING] else "active")
+            if not frames:
+                HEALTH.update(kws_thread_tick_ms=time.time_ns() // 1000000)
                 time.sleep(0.01)
                 continue
-
-            result = SherpaOnnx.kws(frames)
+            if mode != "active":
+                HEALTH.kws(len(frames) // 2, mode)
+                time.sleep(0.01)
+                continue
+            started = time.monotonic()
+            try:
+                result = SherpaOnnx.kws(frames)
+            except Exception:
+                HEALTH.kws(len(frames) // 2, mode, time.monotonic()-started, error=True)
+                raise
+            HEALTH.kws(len(frames) // 2, mode, time.monotonic()-started, hit=bool(result))
             if result:
                 print(f"🔥 触发唤醒: {result}")
                 self.on_message(result)

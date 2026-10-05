@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import threading
+import json
 
 import numpy as np
 import open_xiaoai_server
@@ -8,6 +9,7 @@ import open_xiaoai_server
 from xiaozhi.event import EventManager
 from xiaozhi.ref import get_speaker, set_xiaoai
 from xiaozhi.services.audio.stream import GlobalStream
+from xiaozhi.services.audio.health import HEALTH
 from xiaozhi.services.speaker import SpeakerManager
 from xiaozhi.utils.base import json_decode
 
@@ -45,8 +47,24 @@ class XiaoAI:
 
     @classmethod
     def on_input_data(cls, data: bytes):
+        HEALTH.pcm(np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0)
+        cls._feed_input(data)
+
+    @classmethod
+    def _feed_input(cls, data):
         audio_array = np.frombuffer(data, dtype=np.uint16)
         GlobalStream.input(audio_array.tobytes())
+
+    @classmethod
+    def on_input_packet(cls, packet):
+        data, metadata = packet
+        HEALTH.pcm(np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0, json.loads(metadata))
+        cls._feed_input(data)
+
+    @classmethod
+    def on_health_event(cls, event):
+        record = json.loads(event)
+        HEALTH.emit(record["event"], **record.get("fields", {}))
 
     @classmethod
     def on_output_data(cls, data: bytes):
@@ -107,8 +125,19 @@ class XiaoAI:
 
     @classmethod
     async def init_xiaoai(cls):
+        from xiaozhi.ref import get_kws, get_xiaozhi
+        def probe():
+            kws = get_kws()
+            stream = getattr(kws, "stream", None)
+            state = getattr(get_xiaozhi(), "device_state", None)
+            return {"kws_paused": bool(getattr(kws, "paused", False)), "device_state": getattr(state, "name", str(state)),
+                    "kws_thread_alive": bool(getattr(kws, "thread", None) and kws.thread.is_alive()),
+                    "kws_buffer_samples": len(getattr(stream, "input_bytes", [])) // 2}
+        HEALTH.start(probe)
         GlobalStream.on_output_data = cls.on_output_data
         open_xiaoai_server.register_fn("on_input_data", cls.on_input_data)
+        open_xiaoai_server.register_fn("on_input_packet", cls.on_input_packet)
+        open_xiaoai_server.register_fn("on_health_event", cls.on_health_event)
         open_xiaoai_server.register_fn("on_event", cls.__on_event)
         cls.__init_background_event_loop()
         print(ASCII_BANNER)

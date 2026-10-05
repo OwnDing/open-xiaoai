@@ -91,8 +91,9 @@ class FakeMic:
 
 
 @pytest.fixture
-def config():
+def config(tmp_path):
     return TerminalConfig(
+        base_dir=tmp_path,
         name="test",
         device_id="02:76:74:00:00:99",
         client_id="test-client",
