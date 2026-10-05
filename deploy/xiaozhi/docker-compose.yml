@@ -18,6 +18,7 @@ services:
       - ../../examples/xiaozhi/xiaozhi/xiaozhi.py:/app/xiaozhi/xiaozhi.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/native_tts.py:/app/xiaozhi/services/native_tts.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/audio/kws/__init__.py:/app/xiaozhi/services/audio/kws/__init__.py:ro
+      - ../../examples/xiaozhi/xiaozhi/services/audio/kws/keywords.py:/app/xiaozhi/services/audio/kws/keywords.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/audio/kws/sherpa.py:/app/xiaozhi/services/audio/kws/sherpa.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/audio/vad/__init__.py:/app/xiaozhi/services/audio/vad/__init__.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/protocols/websocket_protocol.py:/app/xiaozhi/services/protocols/websocket_protocol.py:ro
