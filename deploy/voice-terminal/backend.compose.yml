@@ -7,7 +7,10 @@
 #   docker compose -f docker-compose.voice-terminal.yml up -d --build
 #
 # Build context: a copy of deploy/sherpa-tts/xiaozhi-server-overrides from this branch.
-# Data: a copy of ./data with server.websocket pointing at port 18100.
+# Data: a copy of ./data with server.websocket pointing at port 18100 and a
+#   voice_devices section (per-device server audio, TTS, room, reply style).
+# Hermes provider: a copy of this branch's deploy/hermes/xiaozhi-provider/hermes.py,
+#   so the production backend keeps using the main checkout's copy.
 name: xiaozhi-voice-terminal
 
 services:
@@ -21,10 +24,9 @@ services:
       - seccomp:unconfined
     environment:
       - TZ=Asia/Shanghai
-      # Same as production: devices not listed below get text only (小爱 native TTS).
+      # Same as production: devices get text only (小爱 native TTS) unless
+      # voice_devices marks them output: server_audio.
       - XIAOZHI_TTS_OUTPUT_MODE=native_xiaomi
-      # Voice terminals that play server audio (comma-separated Device-Id values).
-      - XIAOZHI_SERVER_AUDIO_DEVICES=02:76:74:00:00:01,02:76:74:00:00:02
     ports:
       - "18100:8000"
       - "18103:8003"
@@ -32,7 +34,7 @@ services:
       - ./data-vt:/opt/xiaozhi-esp32-server/data
       - ./models/SenseVoiceSmall/model.pt:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt
       - ./models/sherpa-onnx-sense-voice:/opt/xiaozhi-esp32-server/models/sherpa-onnx-sense-voice
-      - ../open-xiaoai/deploy/hermes/xiaozhi-provider/hermes.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/hermes.py:ro
+      - ./hermes-provider-vt/hermes.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/hermes.py:ro
     networks:
       - xiaozhi-server_default
 

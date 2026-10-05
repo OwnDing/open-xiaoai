@@ -178,6 +178,17 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("tool", slim)
         self.assertIsNone(hermes.slim_system_prompt("你是家庭语音助手小七。"))
 
+    def test_device_room_and_reply_style_survive_slimming(self):
+        prompt = self.XIAOZHI_PROMPT.replace(
+            "\n</context>",
+            "- Device room: 书房（用户正在这个房间里对这台设备说话）\n"
+            "- Reply style: 用完整的一句话回答。\n</context>",
+        )
+        slim = hermes.slim_system_prompt(prompt)
+        self.assertIn("- Device room: 书房（用户正在这个房间里对这台设备说话）", slim)
+        self.assertIn("- Reply style: 用完整的一句话回答。", slim)
+        self.assertNotIn("Device room", hermes.slim_system_prompt(self.XIAOZHI_PROMPT))
+
     def test_hermes_receives_the_slim_system_prompt(self):
         provider = hermes.LLMProvider({"api_key": "x"})
         sent = []

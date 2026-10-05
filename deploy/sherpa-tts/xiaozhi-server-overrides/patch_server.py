@@ -1,3 +1,10 @@
+"""Build-time patches for xiaozhi-esp32-server (see Dockerfile).
+
+- index_stream TTS: continuous Opus per answer, and text-only output in
+  native_xiaomi mode except for devices that want server audio.
+- connection: per-device TTS module and prompt context from voice_devices.
+"""
+
 from pathlib import Path
 
 
@@ -21,13 +28,6 @@ source = replace_once(
     '''        self.audio_format = "pcm"
         self.before_stop_play_files = []
         self.output_mode = os.getenv("XIAOZHI_TTS_OUTPUT_MODE", "sherpa").strip().lower()
-        # Devices that get server audio even in native_xiaomi mode, such as
-        # PC voice terminals sharing this backend with the 小爱 bridge.
-        self.server_audio_devices = {
-            device.strip().lower()
-            for device in os.getenv("XIAOZHI_SERVER_AUDIO_DEVICES", "").split(",")
-            if device.strip()
-        }
 ''',
 )
 
@@ -72,10 +72,12 @@ source = replace_once(
 
     def _native_xiaomi_text_only(self):
         # self.conn is set by open_audio_channels before any text arrives.
+        # Devices marked for server audio (PC voice terminals) still get it.
+        from core.utils import voice_devices
+
         if self.output_mode != "native_xiaomi":
             return False
-        device_id = (getattr(self.conn, "device_id", None) or "").strip().lower()
-        return device_id not in self.server_audio_devices
+        return not voice_devices.wants_server_audio(self.conn.config, self.conn.device_id)
 
     def to_tts_single_stream(self, text, is_last=False):
 """,
@@ -134,3 +136,39 @@ source = replace_once(
 )
 
 TARGET.write_text(source, encoding="utf-8")
+
+# Per-device TTS module and prompt context (core/utils/voice_devices.py).
+CONNECTION = Path("/opt/xiaozhi-esp32-server/core/connection.py")
+source = CONNECTION.read_text(encoding="utf-8")
+
+source = replace_once(
+    source,
+    """from core.utils.prompt_manager import PromptManager
+""",
+    """from core.utils.prompt_manager import PromptManager
+from core.utils import voice_devices
+""",
+)
+
+source = replace_once(
+    source,
+    """            tts = initialize_tts(self.config)
+""",
+    """            tts = initialize_tts(voice_devices.tts_config(self.config, self.device_id))
+""",
+)
+
+source = replace_once(
+    source,
+    """            emoji_enabled=(self.features or {}).get("emoji", True),
+        )
+        if enhanced_prompt:
+""",
+    """            emoji_enabled=(self.features or {}).get("emoji", True),
+        )
+        enhanced_prompt = voice_devices.add_context(enhanced_prompt, self.config, self.device_id)
+        if enhanced_prompt:
+""",
+)
+
+CONNECTION.write_text(source, encoding="utf-8")

@@ -97,7 +97,12 @@ RETRY_NOTE = (
 CONTEXT_BLOCK = re.compile(r"<context>(.*?)</context>", re.S)
 # xiaozhi refreshes the time on every call; Hermes knows the date but not the
 # time of day or the device's city. Its weather line is deliberately dropped.
-KEPT_CONTEXT = ("Current time", "Today's date", "Today's lunar date", "Device location")
+# Device room / Reply style are per-device lines from voice_devices (xiaozhi
+# server overrides); devices without an entry simply don't have them.
+KEPT_CONTEXT = (
+    "Current time", "Today's date", "Today's lunar date", "Device location",
+    "Device room", "Reply style",
+)
 
 
 def slim_system_prompt(content):

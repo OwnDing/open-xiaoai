@@ -24,10 +24,13 @@ The bridge supports two output paths:
   through the bridge as before.
 
 Other devices can share a `native_xiaomi` backend and still get server audio:
-list their `Device-Id` values in `XIAOZHI_SERVER_AUDIO_DEVICES`
-(comma-separated). Devices not listed, such as the 小爱 bridge, keep getting
-text only. The PC voice terminals use this; see
-[examples/voice-terminal](../../examples/voice-terminal/README.md).
+give them a `voice_devices` entry with `output: server_audio` in
+`data/.config.yaml` (or list their `Device-Id` values in
+`XIAOZHI_SERVER_AUDIO_DEVICES`). The same entry can pick a TTS module, a room
+and a reply style per device. Devices without an entry, such as the 小爱
+bridge, keep getting text only. See
+[examples/voice-terminal](../../examples/voice-terminal/README.md) and
+[voice_devices.py](xiaozhi-server-overrides/voice_devices.py).
 
 On the Windows MINI, run the switch script from PowerShell:
 
