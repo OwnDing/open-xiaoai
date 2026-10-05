@@ -2,7 +2,7 @@
 
 日期：2026-10-04（Asia/Shanghai）
 
-状态：P0.5 已完成主要项，P1 已实现并在 Windows + 京鱼座蓝牙小黑胶上验收（见 [P1 功能测试记录](voice-terminal-p1-tests.md)）。代码在 [examples/voice-terminal](../examples/voice-terminal/README.md)，开发期间使用并行后端，线上后端和小爱桥接未改动。2026-10-04 修订过一次，补充了音频前端、蓝牙通话模式风险、多房间扩展路径、房间上下文和分阶段调整。
+状态：P0.5、P1、P2 的功能部分和 P3 的按设备 Edge TTS 已实现，并在 Windows + 京鱼座蓝牙小黑胶上验收（见 [P1 功能测试记录](voice-terminal-p1-tests.md)、[P2 功能测试记录](voice-terminal-p2-tests.md)）。代码在 [examples/voice-terminal](../examples/voice-terminal/README.md) 和 [xiaozhi-server-overrides](../deploy/sherpa-tts/xiaozhi-server-overrides/voice_devices.py)。开发期间使用并行后端，线上后端和小爱桥接未改动；稳定后再切换到单一后端并合并回 `main`。2026-10-04 修订过一次，补充了音频前端、蓝牙通话模式风险、多房间扩展路径、房间上下文和分阶段调整。
 
 开发在 `feat/voice-terminals` 分支进行，功能测试和实际使用稳定后再合并回 `main`。mini PC 上运行中的服务保持 `main` 版本，新终端独立启停。
 
@@ -49,7 +49,7 @@
 1. [Rust 桥接服务](../examples/xiaozhi/src/server.rs) 在 accept 循环中等待当前连接结束，一次只处理一个音箱连接。
 2. [音频分发](../examples/xiaozhi/xiaozhi/services/audio/stream.py)、`XiaoZhi` 和对话管理包含全局实例，不能直接把多路麦克风混入同一个现有实例。
 3. 仓库已有 `--mode xiaozhi` 本机音频入口，但仍无条件初始化小爱桥接，提示语依赖小爱命令，只使用系统默认音频设备，CLI 录音读取与原生 PyAudio 接口也需要适配。它是代码复用基础，不是已经完成的平台产品。
-4. [后端 TTS 补丁](../deploy/sherpa-tts/xiaozhi-server-overrides/patch_index_stream.py) 通过进程环境变量全局选择输出方式，不能同时满足小爱本地合成与普通终端接收音频。
+4. [后端 TTS 补丁](../deploy/sherpa-tts/xiaozhi-server-overrides/patch_server.py)（原 `patch_index_stream.py`） 通过进程环境变量全局选择输出方式，不能同时满足小爱本地合成与普通终端接收音频。
 5. 当前 [WebSocket 音频协商](../examples/xiaozhi/xiaozhi/services/protocols/websocket_protocol.py) 对返回的 16 kHz 参数与实际 24 kHz 输出存在兼容处理，新终端需明确上下行格式。
 6. [Hermes provider](../deploy/hermes/xiaozhi-provider/hermes.py) 的 `response()` 不使用 `session_id`，每次发送该连接的完整对话，因此对话历史已经按连接隔离；但它拿不到设备或房间信息。
 
@@ -198,6 +198,8 @@ PortAudio 并不意味着所有平台有相同的设备标识或原生 PipeWire 
 
 实施结果（2026-10-04）：SYSTEM 账户（会话 0）下录音和播放都正常，常驻采用计划任务“系统启动时以 SYSTEM 运行、失败 1 分钟后重启”（`scripts/install-task.ps1`）。2026-10-04 重启验证通过：开机后终端自动启动、打开蓝牙设备、后端就绪后自动重连（见 P1 测试记录）。同时发现 Docker Desktop 开机不会自动启动，这是原有问题，会让小爱和后端在重启后一直停着。
 
+2026-10-05 实测：远程桌面连着时，本机蓝牙音箱完全不出声（所有程序，包括会话 0 里的终端），断开后恢复；麦克风不受影响。远程桌面客户端的“远程音频”要设成“在远程计算机上播放”。见 [P2 功能测试记录](voice-terminal-p2-tests.md)。
+
 ## 6. 会话隔离、按来源返回与房间上下文
 
 - 每个逻辑终端使用独立、持久化的 `Device-Id`，格式满足现有协议校验；显示名称与协议身份分开。
@@ -213,7 +215,7 @@ PortAudio 并不意味着所有平台有相同的设备标识或原生 PipeWire 
 - 每台终端（包括小爱）在后端设备映射中登记所在房间，房间名与 Home Assistant 区域对应。
 - 后端建立连接时，把“用户正在 <房间> 说话”写入该连接的系统提示；LLM provider 不需要知道设备身份。
 - 未指明房间的指令（如“把灯打开”）按所在房间执行；用户明确说了其他房间时以用户说法为准。
-- 约束（2026-10-04 核实）：Hermes provider 默认会精简系统提示词，只保留 `<context>` 里的当前时间、日期、农历和设备位置。房间信息需要同时改两处：后端在上下文块里输出这台设备的房间，Hermes provider 的保留列表加上这一项。Hermes provider 目前由线上和并行后端共用同一个文件（main 分支），改动前要给并行后端单独挂一份。同一机制也可以给服务端音频设备加一条“回答至少说成一句完整的话”，用来解决单字回答听不清的问题（见 P1 测试记录）。
+- 实施结果（2026-10-05）：房间写在后端 `voice_devices` 的设备条目里（`room`），后端把“Device room: <房间>（……没说房间的指令指的就是<房间>）”加进这台设备系统提示词的 `<context>`；Hermes provider 的保留列表加了 `Device room` 和 `Reply style`。代码里没有任何具体房间名，没有条目的设备不受影响。同一机制提供 `reply_style: sentence`，解决单字回答听不清的问题。房间由后端统一配置，终端配置里不再有 `room`。
 
 ## 7. 后端按设备选择 TTS
 
@@ -232,7 +234,7 @@ PortAudio 并不意味着所有平台有相同的设备标识或原生 PipeWire 
 - 未登记的设备沿用当前默认行为，保证小爱不受影响。
 - 写成一个单独的 provider / 模块文件，像 `hermes.py` 一样通过卷挂载，不再往 `patch_index_stream.py` 里继续加字符串替换，降低后端升级时的破坏面。
 
-实施结果（2026-10-04）：第一版只需要“哪些设备收服务端音频”，所以在现有补丁里加了 `XIAOZHI_SERVER_AUDIO_DEVICES` 设备名单。这只是几行改动，上游变化时补丁会直接报错，不会悄悄失效。等需要按设备选择 TTS 引擎、音色和房间时，再拆成独立的 provider 和映射表。
+实施结果（2026-10-05）：设备映射表放在后端 `data/.config.yaml` 的 `voice_devices` 段（`output` / `tts` / `room` / `reply_style`），逻辑集中在单独的 [voice_devices.py](../deploy/sherpa-tts/xiaozhi-server-overrides/voice_devices.py)。镜像构建时 [patch_server.py](../deploy/sherpa-tts/xiaozhi-server-overrides/patch_server.py) 只加三处一行的挂钩：创建 TTS（按设备选择模块）、只发文字的判断、提示词上下文。上游代码变化导致挂钩点对不上时，构建会直接失败。早期的 `XIAOZHI_SERVER_AUDIO_DEVICES` 环境变量仍然兼容。配置项 `voice`、`rate` 等音色参数、以及失败后回退到其他 TTS 尚未实现：音色按 `TTS` 下的模块配置，一个模块一种音色。
 
 建议的配置概念如下，属于待实现设计，不是当前配置文件已经支持的字段：
 
@@ -327,8 +329,8 @@ P0.5 结果（2026-10-04，详见 [P0.5 硬件测试记录](voice-terminal-p05-h
 | P0 已完成 | 本方案、Windows 蓝牙输入证据 | 指定设备已采集到 20 秒音频，本地 ASR 分段识别出真人测试内容，用户回听确认 |
 | P0.5 已完成主要项 | 第 8.3 节 A–E 测试，不写终端代码 | 已出[测试记录](voice-terminal-p05-hardware-tests.md)：输出端点和降噪默认档位已确定，语料已录；远程桌面断开、闲置休眠和断电重连待测 |
 | P1 已完成 | Windows 单终端单进程；直连后端；后端按设备 ID 选择输出方式（Sherpa 服务端音频）；轮流听说；按名称绑定设备；降噪前端、连续对话、断线重连、SYSTEM 常驻也已做完（原属 P2） | 已出[测试记录](voice-terminal-p1-tests.md)：蓝牙音箱语音一问一答和连续对话通过，名单外设备只收文字，两台设备同时提问各自返回，重启后自动恢复；蓝牙断连恢复待测 |
-| P2 | 房间上下文和“完整句子回答”提示（后端上下文 + Hermes provider）；重启自启、蓝牙断连、长时间常驻验收；线上后端切到新镜像，小爱和终端共用一个后端 | 每端至少 10 轮；蓝牙和网络恢复后无旧语音残留；未指明房间的指令按所在房间执行；小爱实际使用不受影响 |
-| P3 | 第二台终端（USB 电脑终端或 ESP32）并发；按设备 Edge TTS | 两端同时使用各自返回；一端中断不影响另一端；混用 TTS 引擎验收 |
+| P2 已完成功能部分 | 房间上下文和“完整句子回答”（`voice_devices` + Hermes provider）；重启自启和蓝牙断连恢复已验收；剩余：长时间常驻、线上后端切换到新镜像（小爱和终端共用一个后端）后合并 `main` | 已出[测试记录](voice-terminal-p2-tests.md)；切换步骤见终端 README“切换到单一后端” |
+| P3 | 按设备 Edge TTS（已完成）；第二台终端（USB 电脑终端或 ESP32）并发实机验收（后端双设备并发已由自动测试覆盖，待有第二台设备） | 两端同时使用各自返回；一端中断不影响另一端 |
 | 以后 | 回声消除与语音打断、跨房间唤醒仲裁、macOS / Linux 验收 | 分别记录 |
 
 自动测试覆盖会话隔离、设备选择失败、重连过期任务、格式转换、TTS 引擎混用、在线超时和取消后的音频清理。显式启用回退时验证不重复播报、不向其他设备返回。实际集成验收分别记录 Sherpa / Edge 的音色、首句延迟、长回答停顿、断网行为及设备路由。硬件验收覆盖实录、实播、回声和重连；模拟测试通过不能替代硬件验收。
