@@ -6,6 +6,7 @@
         tts: EdgeTTS              # any module under TTS:, default selected_module.TTS
         room: 书房                # Home Assistant area the device is in
         reply_style: sentence     # sentence, or free text added to the context
+        send_interval_ms: 50      # pace server audio packets (60 ms each) this often
 
 Nothing here is specific to one home: devices without an entry keep the
 backend's defaults. Installed as core/utils/voice_devices.py by the Dockerfile.
@@ -42,6 +43,19 @@ def wants_server_audio(config: dict, device_id) -> bool:
     if _norm(device_id) in listed:
         return True
     return settings(config, device_id).get("output") == "server_audio"
+
+
+def apply_overrides(config: dict, device_id) -> None:
+    """Per-connection config changes; config must be the connection's own copy.
+
+    send_interval_ms paces this device's audio packets faster than real time.
+    Docker on a Hyper-V host can run its clock slow (7.7% on the N100 MINI), so
+    "every 60 ms" in the container is longer in reality and the speaker runs dry.
+    A terminal with a jitter buffer is happy to receive audio a little early.
+    """
+    interval = settings(config, device_id).get("send_interval_ms")
+    if interval:
+        config["tts_audio_send_delay"] = int(interval)
 
 
 def tts_config(config: dict, device_id) -> dict:

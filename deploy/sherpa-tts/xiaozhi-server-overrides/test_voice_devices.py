@@ -10,7 +10,7 @@ CONFIG = {
     "selected_module": {"TTS": "SherpaOnnxTTS", "ASR": "SherpaASR"},
     "TTS": {"SherpaOnnxTTS": {"type": "index_stream"}, "EdgeTTS": {"type": "edge"}},
     "voice_devices": {
-        "02:76:74:00:00:01": {"output": "server_audio", "room": "书房", "reply_style": "sentence"},
+        "02:76:74:00:00:01": {"output": "server_audio", "room": "书房", "reply_style": "sentence", "send_interval_ms": 50},
         "02:76:74:00:00:02": {"output": "server_audio", "tts": "EdgeTTS"},
         "AA:BB:CC:DD:EE:FF": {"room": "客厅", "reply_style": "回答控制在两句话以内。"},
         "02:76:74:00:00:03": {"tts": "NoSuchTTS"},
@@ -43,6 +43,14 @@ class VoiceDevicesTest(unittest.TestCase):
         self.assertIs(voice_devices.tts_config(CONFIG, "02:76:74:00:00:01"), CONFIG)
         with self.assertLogs(voice_devices.log, "WARNING"):
             self.assertIs(voice_devices.tts_config(CONFIG, "02:76:74:00:00:03"), CONFIG)
+
+    def test_send_interval_override_only_for_configured_devices(self):
+        conn_config = dict(CONFIG, tts_audio_send_delay=0)
+        voice_devices.apply_overrides(conn_config, "02:76:74:00:00:01")
+        self.assertEqual(conn_config["tts_audio_send_delay"], 50)
+        other = dict(CONFIG, tts_audio_send_delay=0)
+        voice_devices.apply_overrides(other, "aa:bb:cc:dd:ee:ff")
+        self.assertEqual(other["tts_audio_send_delay"], 0)
 
     def test_context_lines_are_added_inside_the_context_block(self):
         prompt = voice_devices.add_context(PROMPT, CONFIG, "02:76:74:00:00:01")

@@ -154,7 +154,8 @@ source = replace_once(
     source,
     """            tts = initialize_tts(self.config)
 """,
-    """            tts = initialize_tts(voice_devices.tts_config(self.config, self.device_id))
+    """            voice_devices.apply_overrides(self.config, self.device_id)
+            tts = initialize_tts(voice_devices.tts_config(self.config, self.device_id))
 """,
 )
 
