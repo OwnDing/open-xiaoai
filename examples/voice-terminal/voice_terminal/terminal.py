@@ -453,7 +453,6 @@ class Terminal:
         return {
             "name": self.config.name,
             "device_id": self.config.device_id,
-            "room": self.config.room,
             "state": self.state,
             "mode": self.router.mode,
             "connected": self.conn is not None and self.conn.is_open,

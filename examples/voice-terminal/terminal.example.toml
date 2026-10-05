@@ -1,11 +1,11 @@
 # One file per terminal. Relative paths are relative to this file.
 
 [terminal]
-name = "客厅蓝牙音箱"
-# Unique per terminal; the backend routes server audio by this ID
-# (XIAOZHI_SERVER_AUDIO_DEVICES). A locally administered MAC-style value.
+name = "书房蓝牙音箱"
+# Unique per terminal. The backend keys its per-device settings on this ID
+# (voice_devices in data/.config.yaml: server audio, TTS, room, reply style).
+# A locally administered MAC-style value.
 device_id = "02:76:74:00:00:01"
-room = "客厅"
 
 [server]
 websocket_url = "ws://127.0.0.1:18100/xiaozhi/v1/"

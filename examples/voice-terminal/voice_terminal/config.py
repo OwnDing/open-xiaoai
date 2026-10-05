@@ -73,7 +73,6 @@ class TerminalConfig:
     name: str = "voice-terminal"
     device_id: str = ""
     client_id: str = ""
-    room: str = ""
     server: ServerConfig = field(default_factory=ServerConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     wake: WakeConfig = field(default_factory=WakeConfig)

@@ -25,24 +25,44 @@
 - 轮流听说：播放时不收音（P0.5 测得这台蓝牙音箱没有回声消除）。
 - 断线自动重连（后端空闲约 3 分钟会主动断开）；麦克风停止出数据时自动重开设备（蓝牙断开、重连）。
 
-## 后端：按设备发送音频
+## 后端：按设备配置
 
-线上后端是 `native_xiaomi` 模式（只发文字给小爱）。终端需要服务端音频，所以后端补丁增加了设备名单：
+线上后端是 `native_xiaomi` 模式（只发文字给小爱）。每台设备的差异写在后端 `data/.config.yaml` 的 `voice_devices` 里，以连接时的 `Device-Id` 为键；代码里不写任何具体设备或房间：
 
-```text
-XIAOZHI_TTS_OUTPUT_MODE=native_xiaomi
-XIAOZHI_SERVER_AUDIO_DEVICES=02:76:74:00:00:01,02:76:74:00:00:02
+```yaml
+voice_devices:
+  "02:76:74:00:00:01":        # 设备 ID 要加引号
+    output: server_audio      # 收服务端合成的音频；不写就是只收文字（小爱原生合成）
+    tts: EdgeTTS              # 可选：TTS 下的任意模块名，不写用 selected_module.TTS
+    room: 书房                # 可选：Home Assistant 区域名
+    reply_style: sentence     # 可选：sentence = 至少一句完整的话；也可以直接写一句要求
 ```
 
-名单里的设备收 Sherpa 音频，其余设备（小爱）行为不变。补丁见 [patch_index_stream.py](../../deploy/sherpa-tts/xiaozhi-server-overrides/patch_index_stream.py)。
+- `room`：后端在系统提示词的上下文里加一行“Device room: 书房（……没说房间的指令指的就是书房）”。问“这个房间的灯开着吗”就查书房灯。
+- `reply_style: sentence`：避免只回一个字（Sherpa 合成单字很难听清）。
+- 没有条目的设备（比如小爱）行为完全不变。小爱也可以加一条 `room`，但不能写 `output: server_audio`，因为桥接走小爱原生合成。
+- 改完后重启后端容器，设备重连后生效。
+- 兼容旧做法：环境变量 `XIAOZHI_SERVER_AUDIO_DEVICES`（逗号分隔的设备 ID）同样能让设备收服务端音频。
+
+实现：[voice_devices.py](../../deploy/sherpa-tts/xiaozhi-server-overrides/voice_devices.py)，加上 [patch_server.py](../../deploy/sherpa-tts/xiaozhi-server-overrides/patch_server.py) 里的三处挂钩：创建 TTS、只发文字的判断、提示词上下文。Hermes provider 在精简提示词时会保留 `Device room` 和 `Reply style` 两行。
 
 开发期间用一个并行的后端容器，线上后端（18000）不动：
 
 1. 把 `deploy/sherpa-tts/xiaozhi-server-overrides/` 复制到部署目录 `xiaozhi-server\xiaozhi-server-overrides-vt\`。
-2. 复制 `data` 为 `data-vt`，把 `server.websocket` 的端口改成 18100。
-3. 把 [backend.compose.yml](../../deploy/voice-terminal/backend.compose.yml) 复制为 `docker-compose.voice-terminal.yml`，执行 `docker compose -f docker-compose.voice-terminal.yml up -d --build`。
+2. 复制 `data` 为 `data-vt`，把 `server.websocket` 的端口改成 18100，加上 `voice_devices`。
+3. 把本分支的 `deploy/hermes/xiaozhi-provider/hermes.py` 复制到 `xiaozhi-server\hermes-provider-vt\hermes.py`。
+4. 把 [backend.compose.yml](../../deploy/voice-terminal/backend.compose.yml) 复制为 `docker-compose.voice-terminal.yml`，执行 `docker compose -f docker-compose.voice-terminal.yml up -d --build`。
 
 它加入现有的 `xiaozhi-server_default` 网络，共用 sherpa-tts 和 Hermes，端口 18100 / 18103。
+
+### 切换到单一后端（稳定后）
+
+1. 备份线上镜像：`docker tag local/xiaozhi-esp32-server:smooth-audio local/xiaozhi-esp32-server:smooth-audio-backup`。
+2. 合并到 `main`，mini PC 上的 open-xiaoai 检出更新到 `main`（线上 Hermes provider 挂的是这里的文件）。
+3. 用新的 `xiaozhi-server-overrides` 覆盖部署目录里的同名目录，在 `data/.config.yaml` 加上 `voice_devices`，执行 `docker compose up -d --build xiaozhi-esp32-server`。
+4. 终端配置的 `websocket_url` 改回 18000 端口，重启计划任务；停掉并行后端：`docker compose -f docker-compose.voice-terminal.yml down`。
+
+回滚：把备份镜像重新打回 `smooth-audio` 标签，再重建容器；终端改回 18100。
 
 ## 安装（Windows）
 
@@ -102,7 +122,9 @@ curl.exe -s -X POST http://127.0.0.1:18110/ask -d "{\"text\":\"现在几点了\"
 # 单元测试（不需要设备和后端）
 .venv\Scripts\python.exe -X utf8 -m pytest -q
 
-# 后端路由：名单内设备收音频、名单外只收文字、两台同时提问各自返回
+# 后端（6 项）：配置的设备收音频、未配置的只收文字、两台同时提问各自返回、
+# 房间上下文、未配置设备没有房间、完整句子回答。
+# 需要 02:76:74:00:00:02 配成 server_audio + room 卧室 + reply_style sentence（可用 VT_* 环境变量改）
 $env:VT_BACKEND_URL = 'ws://127.0.0.1:18100/xiaozhi/v1/'
 .venv\Scripts\python.exe -X utf8 -m pytest -m backend -v
 
@@ -117,7 +139,8 @@ $env:VT_BACKEND_URL = 'ws://127.0.0.1:18100/xiaozhi/v1/'
 ## 已知问题
 
 - **京鱼座蓝牙小黑胶的麦克风只有 8 kHz 窄带**，打开麦克风后播放也降为通话音质。指令识别可用，唤醒在安静环境 1 米内单独说可以触发，远场和噪声下不稳定。换 USB 麦克风或支持宽带语音的音箱可以改善。
-- **只有一个字的回答听不清**：Sherpa TTS 合成单字（如“二”）只有 0.3 s 左右的声音，再过窄带更难辨认；长回答正常。
-- 房间上下文还没做：Hermes provider 只保留系统提示词里的时间、日期、位置，需要后端模板和 provider 一起改。
+- **远程桌面连着时，本机蓝牙音箱没声音**：所有程序都一样，包括以 SYSTEM 运行的终端；断开远程桌面就恢复。远程桌面客户端的“远程音频”要设成“在远程计算机上播放”（mstsc：本地资源 → 远程音频 → 设置；Mac 的 Windows App / Microsoft Remote Desktop：Play sound → On the remote PC）。
+- Sherpa TTS 合成单字（如“二”）只有约 0.3 s 声音，很难听清；给设备配置 `reply_style: sentence` 后，回答会变成“一加一等于二”这样的完整句子。
+- Edge TTS 是在线合成，按句整段生成，说完后约 2.6 s 才开始出声（Sherpa 约 0.9 s）；断网时这台设备没有语音回答，目前没有自动退回 Sherpa。
 - Windows 11 的 `System32\onnxruntime.dll` 是旧版（1.17）。`sherpa-onnx-core` 必须安装（pyproject 已显式声明），否则 sherpa-onnx 会加载系统里的旧版并在创建模型时崩溃。
 - 在 PowerShell 5.1 里，`.ps1` 脚本要么全用 ASCII，要么存成带 BOM 的 UTF-8。

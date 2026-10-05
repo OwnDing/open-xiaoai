@@ -2,7 +2,6 @@
 [terminal]
 name = "e2e"
 device_id = "02:76:74:00:00:02"
-room = "测试"
 
 [server]
 websocket_url = "ws://127.0.0.1:18100/xiaozhi/v1/"

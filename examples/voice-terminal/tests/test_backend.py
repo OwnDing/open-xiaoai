@@ -2,8 +2,9 @@
 
   VT_BACKEND_URL=ws://127.0.0.1:18100/xiaozhi/v1/ pytest -m backend
 
-VT_AUDIO_DEVICE must be listed in the backend's XIAOZHI_SERVER_AUDIO_DEVICES;
-VT_TEXT_DEVICE must not be (it stands in for the 小爱 bridge).
+VT_AUDIO_DEVICE needs a voice_devices entry with output: server_audio, a
+room (VT_ROOM, default 卧室) and reply_style: sentence; VT_TEXT_DEVICE must
+have no entry (it stands in for the 小爱 bridge). See README "后端".
 """
 
 import asyncio
@@ -16,6 +17,9 @@ import websockets
 URL = os.environ.get("VT_BACKEND_URL", "")
 AUDIO_DEVICE = os.environ.get("VT_AUDIO_DEVICE", "02:76:74:00:00:02")
 TEXT_DEVICE = os.environ.get("VT_TEXT_DEVICE", "02:76:74:00:00:fe")
+ROOM = os.environ.get("VT_ROOM", "卧室")
+# Without a room the model may guess ("客厅或者卧室"), so ask it not to.
+ROOM_QUESTION = "我现在在哪个房间？如果系统没有告诉你，就只回答不知道。"
 QUESTION = "一加一等于几？只回答结果。"
 # A one-word answer ("二") is about 7 packets of 60 ms.
 MIN_AUDIO_PACKETS = 3
@@ -82,3 +86,22 @@ def test_two_devices_at_once_get_their_own_answers():
     assert ("2" in audio_reply or "二" in audio_reply) and "7" not in audio_reply, audio
     assert ("7" in text_reply or "七" in text_reply) and "2" not in text_reply, text
     assert audio["audio_packets"] >= MIN_AUDIO_PACKETS and text["audio_packets"] == 0
+
+
+def reply(result) -> str:
+    return "".join(ch for ch in "".join(result["sentences"]) if ch.isalnum())
+
+
+def test_configured_device_knows_its_room():
+    result = asyncio.run(ask(AUDIO_DEVICE, ROOM_QUESTION))
+    assert ROOM in reply(result), result
+
+
+def test_unconfigured_device_has_no_room():
+    result = asyncio.run(ask(TEXT_DEVICE, ROOM_QUESTION))
+    assert ROOM not in reply(result) and "不知道" in reply(result), result
+
+
+def test_sentence_reply_style_avoids_one_word_answers():
+    result = asyncio.run(ask(AUDIO_DEVICE, "一加一等于几？"))
+    assert len(reply(result)) >= 4, result
