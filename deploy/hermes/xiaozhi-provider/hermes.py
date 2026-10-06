@@ -102,6 +102,25 @@ LATER_WORDS = re.compile(
     r"|\d{1,2}\s*[:：]\s*\d{2}"
     r"|待会儿?|等会儿?|过一会儿?|一会儿(?:以?后|再)|晚点|定时|到点"
 )
+# Teaching a scene or linkage ("以后我说‘我回来了’就开客厅灯", "当洗衣机洗完的时候提醒我")
+# mentions devices and actions, but the agent must first read the rule back and
+# ask; forcing a tool call there would switch the device now instead.
+RULE_WORDS = re.compile(
+    r"以后.{0,4}(我|你)?.{0,2}(说|讲|喊)|每当|每次.{0,12}(就|都)|当.{1,24}(的时候|时候|时)"
+    r"|如果.{1,24}(就|的话)|一.{1,12}就|场景|联动|自动化|规则|口令|每天|每晚|每周|每个?星期"
+    # "漏水了马上告诉我", "洗完了提醒我"; not "告诉我书房灯开着没" (a state question).
+    r"|了.{0,4}(就|马上|立刻|立即|要)?(提醒|告诉|通知)我"
+)
+# After "……要我保存吗？" a "好" must reach the home_rules tool: the model has
+# answered "好了，保存好了" without saving anything.
+ASKED_TO_SAVE = re.compile(r"保存吗|要我保存|存下来吗|要不要保存|删掉吗|要我删")
+AGREEMENT = re.compile(r"^(好|好的|好啊|好吧|可以|行|行的|嗯|嗯嗯|对|对的|是|是的|没问题|确认|要|要的|保存|保存吧|存吧|删吧|删掉吧)$")
+RULE_TOOLS = "mcp__home_rules__"
+SAVE_RETRY_NOTE = (
+    "（系统提示：用户已经同意了，但你上一次没有调用 mcp__home_rules__home_rule_save"
+    "（或 home_rule_delete）就回答了，其实什么都没有保存。现在只为你上一句刚问过的那一项调用它"
+    "（保存时 confirmed 为 true），更早的已经处理过，不要再保存一次；再根据工具结果回答。）"
+)
 SCHEDULE_RETRY_NOTE = (
     "（系统提示：这是设备控制请求，但你上一次没有调用任何工具就回答了。"
     "用户要在之后某个时间执行的，必须调用 cronjob_manage 创建一次性定时任务"
@@ -152,6 +171,17 @@ def _message_text(message):
 
 def is_control_request(text):
     return bool(DEVICE_WORDS.search(text) and COMMAND_WORDS.search(text))
+
+
+def confirms_rule(dialogue, request):
+    """The user agreed to the save/delete the assistant just asked about."""
+    before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
+    asked = before and before[-1].get("role") == "assistant" and ASKED_TO_SAVE.search(_message_text(before[-1]))
+    return bool(asked and AGREEMENT.match(_spoken(request)))
+
+
+def is_rule_request(text):
+    return bool(RULE_WORDS.search(text))
 
 
 def is_scheduled_control(text):
@@ -348,7 +378,12 @@ class LLMProvider(LLMProviderBase):
         users = [m for m in dialogue if m.get("role") == "user"]
         request = _message_text(users[-1]) if users else ""
 
-        if self.tool_guard and is_scheduled_control(request):
+        if self.tool_guard and confirms_rule(dialogue, request):
+            required, note, reason = RULE_TOOLS, SAVE_RETRY_NOTE, "确认保存后未调用规则工具"
+        elif self.tool_guard and is_rule_request(request):
+            # Teaching or managing a scene/linkage: answered normally (see RULE_WORDS).
+            required = note = reason = None
+        elif self.tool_guard and is_scheduled_control(request):
             # Any tool satisfies it: a time-of-day mention may still mean "now".
             required, note, reason = None, SCHEDULE_RETRY_NOTE, "定时控制请求未调用工具"
         elif self.tool_guard and is_control_request(request):
@@ -356,6 +391,8 @@ class LLMProvider(LLMProviderBase):
         elif self.tool_guard and is_state_question(request):
             required, note, reason = "ha_", STATE_RETRY_NOTE, "设备状态问题未查询"
         else:
+            required = note = reason = None
+        if note is None:
             state = {"spoken": False, "held": ""}
             yield from self._clean(self._with_search_filler(self._events(dialogue), state))
             if state["spoken"]:

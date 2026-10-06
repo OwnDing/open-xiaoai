@@ -49,6 +49,22 @@ platform_toolsets:
   cron:
     - homeassistant
 
+# Voice-taught scenes and linkages (stored as Home Assistant scripts and
+# automations) plus the script.xiaoqi_announce speaker script; see
+# mcp/home_rules. Only these two variables reach the server process.
+mcp_servers:
+  home_rules:
+    command: /opt/hermes/.venv/bin/python
+    args: ["-m", "home_rules.server"]
+    cwd: /opt/data/mcp
+    env:
+      HASS_URL: "${HASS_URL}"
+      HASS_TOKEN: "${HASS_TOKEN}"
+    # No generic resource/prompt helper tools: the server only offers its four tools.
+    tools:
+      resources: false
+      prompts: false
+
 memory:
   memory_enabled: true
   user_profile_enabled: true

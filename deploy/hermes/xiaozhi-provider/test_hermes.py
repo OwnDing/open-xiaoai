@@ -282,6 +282,60 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(spoken, "好，九点十分关客厅灯。")
         self.assertEqual(len(requests), 1)
 
+    def test_teaching_scenes_and_linkages_is_not_forced_into_a_tool(self):
+        for text in ("以后我说我回来了，就打开客厅灯和空调", "当洗衣机洗完的时候提醒我", "主卧开关一双击就关掉全屋的灯",
+                     "阳台漏水了马上告诉我，如果是半夜也要说", "把我回来了这个场景删掉", "每天晚上十一点关掉书房灯",
+                     "有哪些联动"):
+            self.assertTrue(hermes.is_rule_request(text), text)
+        for text in ("打开客厅灯", "两个小时后关掉鱼缸插座", "书房灯是不是开着", "我回来了",
+                     "告诉我书房灯开着没"):
+            self.assertFalse(hermes.is_rule_request(text), text)
+
+    def test_rule_read_back_without_tool_is_spoken_once(self):
+        spoken, requests = self.run_turn(
+            "以后我说我回来了，就打开客厅灯",
+            [("text", "以后你说“我回来了”，我就打开客厅灯，要我保存吗？")],
+        )
+        self.assertEqual(spoken, "以后你说“我回来了”，我就打开客厅灯，要我保存吗？")
+        self.assertEqual(len(requests), 1)
+
+    def run_dialogue(self, dialogue, *streams):
+        provider = hermes.LLMProvider({"api_key": "x"})
+        scripts, requests = list(streams), []
+
+        def fake_events(sent):
+            requests.append(sent[-1]["content"])
+            yield from scripts.pop(0)
+
+        provider._events = fake_events
+        return "".join(provider.response("s", dialogue)), requests
+
+    ASKED = {"role": "assistant", "content": "以后阳台一漏水，我就马上在音箱上告诉你，半夜也会说。要我保存吗？"}
+
+    def test_agreeing_to_save_must_reach_the_rule_tool(self):
+        spoken, requests = self.run_dialogue(
+            [user("以后阳台漏水了马上告诉我"), self.ASKED, user("好")],
+            [("text", "好了，阳台一漏水我就马上告诉你。")],
+            [("tool", "mcp__home_rules__home_rule_save"), ("text", "保存好了。")],
+        )
+        self.assertEqual(spoken, "保存好了。")
+        self.assertIn(hermes.SAVE_RETRY_NOTE, requests[1])
+
+    def test_saving_on_the_first_try_is_not_retried(self):
+        spoken, requests = self.run_dialogue(
+            [user("以后阳台漏水了马上告诉我"), self.ASKED, user("可以。")],
+            [("tool", "mcp__home_rules__home_rule_save"), ("text", "保存好了。")],
+        )
+        self.assertEqual((spoken, len(requests)), ("保存好了。", 1))
+
+    def test_ok_without_a_save_question_is_a_normal_turn(self):
+        spoken, requests = self.run_dialogue(
+            [user("讲个笑话"), {"role": "assistant", "content": "从前有只猫。"}, user("好")],
+            [("text", "再讲一个。")],
+        )
+        self.assertEqual((spoken, len(requests)), ("再讲一个。", 1))
+        self.assertFalse(hermes.confirms_rule([user("x"), self.ASKED, user("不用了")], "不用了"))
+
 
 if __name__ == "__main__":
     unittest.main()
