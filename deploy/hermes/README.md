@@ -17,7 +17,7 @@ Latency results and the POC evaluation are in
 |---|---|
 | `docker-compose.yml` | Hermes gateway (`hermes` container, volume `hermes-data`), joined to `xiaozhi-server_default` |
 | `.env.example` | Keys: `API_SERVER_KEY`, `DEEPSEEK_API_KEY`, `TAVILY_API_KEY`, `HASS_URL`, `HASS_TOKEN` |
-| `profile/` | The voice profile: `config.yaml`, `SOUL.md` (persona + device table), `skills/` (sleep-mode) |
+| `profile/` | The voice profile: `config.yaml`, `SOUL.md` (persona + device table + saved scene phrases), `skills/` (sleep-mode, home-rules), `mcp/home_rules` (scene/linkage MCP server) |
 | `switch-llm.ps1`, `switch_llm.py` | Switch xiaozhi-server between `hermes` and direct `deepseek` (backs up `.config.yaml` first) |
 | `ha_device_table.py` | Generates the Home Assistant device table inside `profile/SOUL.md` |
 | `demo-ha/` | Virtual Home Assistant used for the POC benchmarks (not deployed any more) |
@@ -116,6 +116,58 @@ is a `cron_<job>_<time>` session in `state.db` and its reply is saved under
 
 `bench/multiturn_text.py` replays such a conversation on one connection;
 `bench/tool_honesty.py` measures the same effect directly against Hermes.
+
+## Voice-taught scenes and linkages (home_rules)
+
+Nothing is preset: the user teaches scenes (“以后我说‘我回来了’，就开客厅灯”) and
+linkages (“洗衣机洗完了提醒我”, “主卧开关双击就关书房灯”, “阳台漏水马上告诉我”) by voice.
+[`profile/mcp/home_rules`](profile/mcp/home_rules) is a stdio MCP server that Hermes
+starts from `config.yaml` (`mcp_servers.home_rules`; only `HASS_URL`/`HASS_TOKEN`
+reach it, and the generic resource/prompt helper tools are off). It offers four
+tools, `mcp__home_rules__home_rule_save`, `home_rules_list`, `home_rule_delete`
+and `home_rule_run`; the [`home-rules`](profile/skills/home/home-rules/SKILL.md)
+skill tells the model how to use them.
+
+- Scenes become HA scripts (`script.xiaoqi_scene_*`), linkages HA automations
+  (config id `xiaoqi_rule_*`), so they run inside Home Assistant and show up in
+  its UI. The server only ever lists, changes or deletes objects with these ids.
+- The model describes a rule in a fixed vocabulary (triggers: state, numeric,
+  event, time; conditions: state, numeric, time; actions: device, announce,
+  scene, delay); `rules.py` checks entities, services and state values against
+  live HA and translates it. High-risk devices (locks, heaters, water heaters)
+  are refused; a linkage that switches a medium-risk device (AC, curtains, TV)
+  must also announce it; only a linkage triggered by a leak/smoke/gas sensor may
+  speak in quiet hours.
+- Scenes and lasting linkages need two calls: the first returns
+  `needs_confirmation` and a summary to read back, the second
+  (`confirmed: true`, after the user agreed) saves. A one-shot linkage
+  (`once: true`, “这次洗完提醒我”) saves at once, switches itself off after
+  running and is deleted on the next listing. Saving the same behaviour under
+  another name returns `already_saved` instead of a duplicate.
+- Saved scene phrases are written into `SOUL.md` between `<!-- scenes:start -->`
+  and `<!-- scenes:end -->` (at server start and after every scene change);
+  Hermes reads SOUL.md for each new conversation, so a phrase taught once works
+  in later conversations. `install.sh` resets the block, so restart Hermes after
+  installing the profile.
+- The provider guard leaves teaching phrases (`RULE_WORDS`: 以后我说…, 当…的时候,
+  …了提醒我, 每天…) to the normal path, and when the user agrees to an
+  “要我保存吗？” it requires a `mcp__home_rules__` tool call, retrying once
+  (logged as `确认保存后未调用规则工具`).
+
+Unit tests: `cd profile/mcp && python3 -m unittest test_home_rules`. Inspect or
+remove what was taught from the HA UI, or by voice (“现在有哪些联动”, “把……删掉”).
+
+### Proactive announcements (script.xiaoqi_announce)
+
+The server also installs (and keeps up to date) the HA script
+`script.xiaoqi_announce` with fields `message` and `urgent`. It speaks through
+the XiaoAi speaker's play-text action (`notify.*_play_text_*`, found
+automatically). The quiet hours are the speaker's own do-not-disturb switch and
+time period (editable in the Mi Home app): inside them a non-urgent message is
+dropped; an urgent one switches do-not-disturb off, speaks and switches it back
+on. Linkages, reminders (cron jobs) and timed device actions all call it through
+`ha_call_service` (domain `script`, service `xiaoqi_announce`). Only the
+living-room XiaoAi speaks; the voice terminals do not.
 
 ## Profile choices that matter for latency
 
