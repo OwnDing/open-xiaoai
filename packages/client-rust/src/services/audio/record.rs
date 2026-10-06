@@ -70,8 +70,9 @@ impl AudioRecorder {
         config: Option<AudioConfig>,
     ) -> Result<(), AppError>
     where
+        // Resolves to how many older queued packets were dropped to make room.
         F: Fn(Vec<u8>, Value) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<(), AppError>> + Send + 'static,
+        Fut: Future<Output = Result<usize, AppError>> + Send + 'static,
     {
         let mut state = self.state.lock().await;
         if *state == State::Recording {
@@ -191,15 +192,19 @@ impl AudioRecorder {
                                     h.max_send_ms =
                                         h.max_send_ms.max(start.elapsed().as_secs_f64() * 1000.0);
                                 }
-                                if let Err(error) = result {
-                                    h.send_errors += 1;
-                                    emit(
-                                        "send_error",
-                                        json!({"capture_id": h.capture_id, "seq": h.seq, "error": error.to_string()}),
-                                    );
-                                } else {
-                                    h.sent_samples += samples as u64;
-                                    h.sent_packets += 1;
+                                match result {
+                                    Err(error) => {
+                                        h.send_errors += 1;
+                                        emit(
+                                            "send_error",
+                                            json!({"capture_id": h.capture_id, "seq": h.seq, "error": error.to_string()}),
+                                        );
+                                    }
+                                    Ok(dropped) => {
+                                        h.sent_samples += samples as u64;
+                                        h.sent_packets += 1;
+                                        h.queue_dropped_packets += dropped as u64;
+                                    }
                                 }
                             }
                         }
@@ -260,6 +265,8 @@ struct CaptureHealth {
     attempted_samples: u64,
     sent_samples: u64,
     sent_packets: u64,
+    /// Queued packets dropped because the link fell more than ~1 s behind.
+    queue_dropped_packets: u64,
     seq: u64,
     last_read: Instant,
     last_report: Instant,
@@ -287,6 +294,7 @@ impl CaptureHealth {
             attempted_samples: 0,
             sent_samples: 0,
             sent_packets: 0,
+            queue_dropped_packets: 0,
             seq: 0,
             last_read: Instant::now(),
             last_report: Instant::now(),
@@ -325,6 +333,7 @@ impl CaptureHealth {
             json!({"capture_id": self.capture_id, "window_s": elapsed,
             "sample_rate": self.rate, "seq": self.seq, "captured_samples_total": self.captured_samples,
             "sent_samples_total": self.sent_samples, "sent_packets_total": self.sent_packets,
+            "queue_dropped_packets_total": self.queue_dropped_packets,
             "capture_rate_hz": (self.captured_samples-self.previous_captured) as f64/elapsed,
             "send_rate_hz": (self.sent_samples-self.previous_sent) as f64/elapsed,
             "input_age_ms": self.last_read.elapsed().as_secs_f64()*1000.0,

@@ -1,6 +1,6 @@
 services:
   open-xiaoai-xiaozhi:
-    image: local/open-xiaoai-xiaozhi:wake-lifecycle
+    image: local/open-xiaoai-xiaozhi:link-resilience
     container_name: open-xiaoai-xiaozhi
     restart: unless-stopped
     environment:
