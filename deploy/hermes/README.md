@@ -81,6 +81,39 @@ an explicit reminder. Other requests stream through untouched. With the guard
 all 16 commands of that test reached the devices. Set `tool_guard: false` in
 the LLM entry to disable it; retries are logged as `设备控制请求未调用工具`.
 
+A command for later (“两个小时后关鱼缸灯”, “三点关空调”, “待会儿开灯”: a concrete
+duration or clock time, not “几点”) gets a different reminder, logged as
+`定时控制请求未调用工具`: create a one-shot `cronjob_manage` job instead of
+calling `ha_call_service` now. Any tool still satisfies the guard there, since
+“现在三点了，把灯关了” means now.
+
+## Timed device control (cron)
+
+Hermes' `cronjob_manage` tool schedules device actions; the gateway ticks about
+once a minute, so a job fires up to a minute late. `SOUL.md` tells the model to
+create a one-shot job (`schedule` such as `in 2h` or a dated time) whose prompt
+names the entity and the action, with `deliver: local` (the API server cannot
+push to a speaker, so nothing is announced when it fires) and
+`enabled_toolsets: ["homeassistant"]`. Cancelling or listing goes through the
+same tool (`list`, then `remove`).
+
+A job runs unattended, auto-approved, in a fresh agent session, so
+`config.yaml` limits it twice:
+
+- `platform_toolsets.cron: [homeassistant]` — left unset, cron gets the full
+  default set (terminal, files, code execution, browser, computer use...).
+- `agent.disabled_toolsets` — a job's own `enabled_toolsets` overrides the cron
+  platform list (the tool tells the model to "infer" it: it once wrote
+  `["home"]`, which is no toolset at all, and the run had no tools), so the
+  risky toolsets are denied globally as well. The API-server tool list is
+  unchanged by it; composite sets such as `debugging` stay off the list because
+  they also carry web search.
+
+Check jobs with `docker exec -u hermes hermes hermes cron list --all`; each run
+is a `cron_<job>_<time>` session in `state.db` and its reply is saved under
+`/opt/data/cron/output/<job>/`. A run whose reply is raw tool-call markup
+(`<｜｜DSML｜｜ calls>`) had no tools.
+
 `bench/multiturn_text.py` replays such a conversation on one connection;
 `bench/tool_honesty.py` measures the same effect directly against Hermes.
 

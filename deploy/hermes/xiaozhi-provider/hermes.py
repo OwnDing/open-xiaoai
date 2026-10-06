@@ -92,6 +92,23 @@ RETRY_NOTE = (
     "现在必须调用 ha_call_service 真正执行，需要确认状态时调用 ha_get_state，"
     "再根据工具结果回答。不要照抄聊天记录里以前的回答。）"
 )
+# A command for later ("两个小时后关掉鱼缸灯", "三点关空调", "待会儿开灯") must become
+# a scheduled job; RETRY_NOTE would push it to run now. "几点" is a question,
+# so only concrete numbers count.
+NUMBER = r"(?:\d+|[零一二两三四五六七八九十]+)"
+LATER_WORDS = re.compile(
+    NUMBER + r"?\s*个?\s*半?\s*(?:小时|钟头|分钟)\s*(?:以?后|之后|过后)"
+    r"|" + NUMBER + r"\s*点(?:半|钟|" + NUMBER + r"分?)?"
+    r"|\d{1,2}\s*[:：]\s*\d{2}"
+    r"|待会儿?|等会儿?|过一会儿?|一会儿(?:以?后|再)|晚点|定时|到点"
+)
+SCHEDULE_RETRY_NOTE = (
+    "（系统提示：这是设备控制请求，但你上一次没有调用任何工具就回答了。"
+    "用户要在之后某个时间执行的，必须调用 cronjob_manage 创建一次性定时任务"
+    "（action 为 create，schedule 用 in 2h 这样的时长或带日期的时间，"
+    "prompt 写明调用 ha_call_service 对哪个实体做什么，deliver 为 local），不要现在就执行；"
+    "用户要现在执行的，调用 ha_call_service。再根据工具结果回答。）"
+)
 
 
 CONTEXT_BLOCK = re.compile(r"<context>(.*?)</context>", re.S)
@@ -137,6 +154,10 @@ def is_control_request(text):
     return bool(DEVICE_WORDS.search(text) and COMMAND_WORDS.search(text))
 
 
+def is_scheduled_control(text):
+    return is_control_request(text) and bool(LATER_WORDS.search(text))
+
+
 def is_state_question(text):
     return bool(
         STATE_SUBJECTS.search(text)
@@ -152,6 +173,7 @@ def _spoken(text):
 
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
+LATIN = re.compile(r"[A-Za-z]")
 LATIN_WORDS = re.compile(r"[A-Za-z]{2,}")
 
 
@@ -276,8 +298,10 @@ class LLMProvider(LLMProviderBase):
                 yield value
                 continue
             held += value
-            if not CJK.search(held) and LATIN_WORDS.search(held):
-                continue  # possibly an English lead-in; wait for Chinese or a tool
+            if not CJK.search(held) and LATIN.search(held):
+                # Possibly an English lead-in, which may arrive a letter at a
+                # time ("I", "'ll check..."): wait for Chinese or a tool.
+                continue
             held = _drop_english_lead_in(held)
             waiting = False
             while True:
@@ -324,7 +348,10 @@ class LLMProvider(LLMProviderBase):
         users = [m for m in dialogue if m.get("role") == "user"]
         request = _message_text(users[-1]) if users else ""
 
-        if self.tool_guard and is_control_request(request):
+        if self.tool_guard and is_scheduled_control(request):
+            # Any tool satisfies it: a time-of-day mention may still mean "now".
+            required, note, reason = None, SCHEDULE_RETRY_NOTE, "定时控制请求未调用工具"
+        elif self.tool_guard and is_control_request(request):
             required, note, reason = None, RETRY_NOTE, "设备控制请求未调用工具"
         elif self.tool_guard and is_state_question(request):
             required, note, reason = "ha_", STATE_RETRY_NOTE, "设备状态问题未查询"

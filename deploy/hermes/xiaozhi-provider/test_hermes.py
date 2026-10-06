@@ -148,6 +148,24 @@ class ProviderTests(unittest.TestCase):
         )
         self.assertEqual(spoken, "猫喜欢纸箱是因为安全感。")
 
+    def test_english_lead_in_streamed_letter_by_letter_is_dropped(self):
+        # The first chunk can be a lone "I", too short to look like English.
+        spoken, _ = self.run_turn(
+            "取消刚才关书房灯的定时任务",
+            [("text", "I"), ("text", "'ll look up your scheduled tasks first."),
+             ("tool", "cronjob_manage"), ("text", "好了，那个定时任务取消了。")],
+        )
+        self.assertEqual(spoken, "好了，那个定时任务取消了。")
+        spoken, _ = self.run_turn(
+            "现在有哪些定时任务",
+            [("text", "I"), ("text", "'ll check."), ("text", "现在没有定时任务。")],
+        )
+        self.assertEqual(spoken, "现在没有定时任务。")
+
+    def test_answer_starting_with_a_single_latin_letter_is_kept(self):
+        spoken, _ = self.run_turn("今天股市怎么样", [("text", "A"), ("text", "股今天小幅上涨。")])
+        self.assertEqual(spoken, "A股今天小幅上涨。")
+
     def test_mixed_chinese_with_english_names_is_kept(self):
         spoken, _ = self.run_turn(
             "今天科技新闻", [("tool", "web_search"), ("text", "OpenAI 发了新模型，"), ("text", "估值很高。")]
@@ -236,6 +254,33 @@ class ProviderTests(unittest.TestCase):
             self.assertFalse(hermes.is_control_request(text), text)
         for text in ("关闭书房灯", "能把客厅灯关了吗？", "把空调调到26度", "开灯"):
             self.assertTrue(hermes.is_control_request(text), text)
+
+    def test_commands_for_later_are_scheduled(self):
+        for text in ("好的，那你帮我两个小时以后关掉那个鱼缸插座的灯", "半小时后关闭客厅灯",
+                     "一个半小时后关空调", "10分钟后打开风扇", "你三点钟的时候关掉它可以吗？把鱼缸插座关了",
+                     "晚上9点半关闭书房灯", "15:30把空调关掉", "待会儿把客厅灯关了", "定时关闭电视"):
+            self.assertTrue(hermes.is_scheduled_control(text), text)
+        for text in ("关闭书房灯", "把空调调到26度", "客厅灯几点开的", "鱼缸插座是不是三点关的",
+                     "两个小时后提醒我喝水"):
+            self.assertFalse(hermes.is_scheduled_control(text), text)
+
+    def test_scheduled_command_without_tool_asks_for_a_cron_job(self):
+        spoken, requests = self.run_turn(
+            "两个小时以后关掉鱼缸插座",
+            [("text", "好，两小时后帮你关掉。")],
+            [("tool", "cronjob_manage"), ("text", "好，下午三点零六分关鱼缸插座。")],
+        )
+        self.assertEqual(spoken, "好，下午三点零六分关鱼缸插座。")
+        self.assertIn(hermes.SCHEDULE_RETRY_NOTE, requests[1])
+        self.assertNotIn(hermes.RETRY_NOTE, requests[1])
+
+    def test_scheduled_command_with_a_cron_job_is_not_retried(self):
+        spoken, requests = self.run_turn(
+            "半小时后关闭客厅灯",
+            [("tool", "cronjob_manage"), ("text", "好，九点十分关客厅灯。")],
+        )
+        self.assertEqual(spoken, "好，九点十分关客厅灯。")
+        self.assertEqual(len(requests), 1)
 
 
 if __name__ == "__main__":
