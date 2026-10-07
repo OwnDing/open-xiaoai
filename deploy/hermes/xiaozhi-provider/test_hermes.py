@@ -282,6 +282,23 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(spoken, "好，九点十分关客厅灯。")
         self.assertEqual(len(requests), 1)
 
+    def test_asking_back_about_an_unclear_command_is_kept(self):
+        spoken, requests = self.run_turn(
+            "鱼缸灯关了吧",
+            [("text", "是现在就关鱼缸灯，还是等十一点再关？")],
+        )
+        self.assertEqual((spoken, len(requests)), ("是现在就关鱼缸灯，还是等十一点再关？", 1))
+
+    def test_a_question_that_claims_success_is_still_retried(self):
+        for claim in ("好了，鱼缸灯关了，还要别的吗？", "鱼缸灯已经关掉了，要不要把十一点那个也取消？"):
+            spoken, requests = self.run_turn(
+                "把鱼缸灯关了",
+                [("text", claim)],
+                [("tool", "ha_call_service"), ("text", "好了，鱼缸灯关了。")],
+            )
+            self.assertEqual(spoken, "好了，鱼缸灯关了。", claim)
+            self.assertIn(hermes.RETRY_NOTE, requests[1])
+
     def test_teaching_scenes_and_linkages_is_not_forced_into_a_tool(self):
         for text in ("以后我说我回来了，就打开客厅灯和空调", "当洗衣机洗完的时候提醒我", "主卧开关一双击就关掉全屋的灯",
                      "阳台漏水了马上告诉我，如果是半夜也要说", "把我回来了这个场景删掉", "每天晚上十一点关掉书房灯",
@@ -327,6 +344,28 @@ class ProviderTests(unittest.TestCase):
             [("tool", "mcp__home_rules__home_rule_save"), ("text", "保存好了。")],
         )
         self.assertEqual((spoken, len(requests)), ("保存好了。", 1))
+
+    SCHEDULED = [user("记得今天11点钟关闭鱼缸灯"), {"role": "assistant", "content": "好，今天上午十一点整关鱼缸插座，关好我会说一声。"}]
+
+    def test_vague_words_right_after_a_schedule_only_ask(self):
+        for overheard in ("会关，现在会关。", "关了吧", "开着吧"):
+            spoken, requests = self.run_dialogue(
+                self.SCHEDULED + [user(overheard)],
+                [("text", "是现在就关鱼缸灯，还是等十一点？")],
+            )
+            self.assertEqual(spoken, "是现在就关鱼缸灯，还是等十一点？", overheard)
+            self.assertIn(hermes.UNCLEAR_NOTE, requests[0], overheard)
+
+    def test_clear_words_after_a_schedule_are_normal(self):
+        asked = {"role": "assistant", "content": "是现在就关鱼缸灯，还是等十一点？"}
+        stated = {"role": "assistant", "content": "现在是上午九点二十，鱼缸插座开着。"}
+        for dialogue in (self.SCHEDULED + [user("现在就把鱼缸灯关了")],
+                         self.SCHEDULED + [user("好的，谢谢")],
+                         self.SCHEDULED + [user("改成十二点关")],
+                         self.SCHEDULED + [asked, user("现在关")],
+                         [user("鱼缸插座开着吗"), stated, user("关了吧")]):
+            self.assertFalse(hermes.is_unclear_after_schedule(dialogue, hermes._message_text(dialogue[-1])),
+                             dialogue[-1])
 
     def test_ok_without_a_save_question_is_a_normal_turn(self):
         spoken, requests = self.run_dialogue(

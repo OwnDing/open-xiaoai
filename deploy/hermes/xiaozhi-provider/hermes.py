@@ -102,6 +102,16 @@ LATER_WORDS = re.compile(
     r"|\d{1,2}\s*[:：]\s*\d{2}"
     r"|待会儿?|等会儿?|过一会儿?|一会儿(?:以?后|再)|晚点|定时|到点"
 )
+# Right after the agent confirmed a schedule ("好，十一点整关鱼缸插座"), a vague
+# 开/关 with no device and no time ("会关，现在会关", said to someone else in the
+# room) was taken as "switch it off now". Such a turn gets UNCLEAR_NOTE instead.
+SCHEDULE_CONFIRMED = re.compile(r"(?:" + LATER_WORDS.pattern + r")[^，。？！,.?!]{0,8}(?:关|开|调)")
+VAGUE_ACTION = re.compile(r"关|开(?!心|始|玩|会|学|车|门见山)|调(?!皮)")
+UNCLEAR_NOTE = (
+    "（系统提示：你刚安排了定时任务，这句话没说是哪个设备，也没说时间，可能是家里人之间在说话。"
+    "这一轮不要调用任何工具：如果是在问你，就直接回答；听不出是不是要你现在动手，"
+    "就用一句话问清楚，例如“是现在就关，还是等到点再关？”。）"
+)
 # Teaching a scene or linkage ("以后我说‘我回来了’就开客厅灯", "当洗衣机洗完的时候提醒我")
 # mentions devices and actions, but the agent must first read the rule back and
 # ask; forcing a tool call there would switch the device now instead.
@@ -111,6 +121,12 @@ RULE_WORDS = re.compile(
     # "漏水了马上告诉我", "洗完了提醒我"; not "告诉我书房灯开着没" (a state question).
     r"|了.{0,4}(就|马上|立刻|立即|要)?(提醒|告诉|通知)我"
 )
+# A command may be unclear or overheard ("会关，现在会关" said to someone else right
+# after "11点关鱼缸灯"); asking back claims nothing, so it may stand without a tool.
+# A question that also claims success ("好了，灯关了，还要别的吗？") may not.
+QUESTION_END = re.compile(r"[？?]\s*$")
+DONE_CLAIM = re.compile(r"好了|搞定|已经|已(开|关|调|设)|(开|关|调|设)(好|了)|掉了")
+
 # After "……要我保存吗？" a "好" must reach the home_rules tool: the model has
 # answered "好了，保存好了" without saving anything.
 ASKED_TO_SAVE = re.compile(r"保存吗|要我保存|存下来吗|要不要保存|删掉吗|要我删")
@@ -178,6 +194,22 @@ def confirms_rule(dialogue, request):
     before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
     asked = before and before[-1].get("role") == "assistant" and ASKED_TO_SAVE.search(_message_text(before[-1]))
     return bool(asked and AGREEMENT.match(_spoken(request)))
+
+
+def is_clarifying(reply):
+    reply = reply.strip()
+    return bool(QUESTION_END.search(reply)) and not DONE_CLAIM.search(reply)
+
+
+def is_unclear_after_schedule(dialogue, request):
+    """A vague 开/关 (no device, no time) right after the agent confirmed a schedule."""
+    before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
+    if not before or before[-1].get("role") != "assistant":
+        return False
+    reply = _message_text(before[-1]).strip()
+    if QUESTION_END.search(reply) or not SCHEDULE_CONFIRMED.search(reply):
+        return False
+    return bool(VAGUE_ACTION.search(request) and not is_control_request(request) and not LATER_WORDS.search(request))
 
 
 def is_rule_request(text):
@@ -378,7 +410,11 @@ class LLMProvider(LLMProviderBase):
         users = [m for m in dialogue if m.get("role") == "user"]
         request = _message_text(users[-1]) if users else ""
 
-        if self.tool_guard and confirms_rule(dialogue, request):
+        if self.tool_guard and is_unclear_after_schedule(dialogue, request):
+            logger.bind(tag=TAG).warning(f"刚定好定时任务，这句没说设备和时间，只回答或反问: {request}")
+            dialogue = self._with_note(dialogue, request, UNCLEAR_NOTE)
+            required = note = reason = None
+        elif self.tool_guard and confirms_rule(dialogue, request):
             required, note, reason = RULE_TOOLS, SAVE_RETRY_NOTE, "确认保存后未调用规则工具"
         elif self.tool_guard and is_rule_request(request):
             # Teaching or managing a scene/linkage: answered normally (see RULE_WORDS).
@@ -428,8 +464,12 @@ class LLMProvider(LLMProviderBase):
         if state["used_tool"]:
             return
 
-        held = state["held"]
-        logger.bind(tag=TAG).warning(f"{reason}，已丢弃回答并重试: {request} -> {''.join(held)[:60]}")
+        held = "".join(state["held"])
+        if note in (RETRY_NOTE, SCHEDULE_RETRY_NOTE) and is_clarifying(held):
+            logger.bind(tag=TAG).warning(f"{reason}，但回答是反问，保留: {request} -> {held[:60]}")
+            yield from self._clean(iter([held]))
+            return
+        logger.bind(tag=TAG).warning(f"{reason}，已丢弃回答并重试: {request} -> {held[:60]}")
         retry = self._events(self._with_note(dialogue, request, note))
         yield from self._clean(self._with_search_filler(retry, {"spoken": False, "held": ""}))
 
