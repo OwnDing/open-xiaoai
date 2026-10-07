@@ -73,12 +73,19 @@ TTS:
 
 ### 切换到单一后端（稳定后）
 
-1. 备份线上镜像：`docker tag local/xiaozhi-esp32-server:smooth-audio local/xiaozhi-esp32-server:smooth-audio-backup`。
-2. 合并到 `main`，mini PC 上的 open-xiaoai 检出更新到 `main`（线上 Hermes provider 挂的是这里的文件）。
-3. 用新的 `xiaozhi-server-overrides` 覆盖部署目录里的同名目录，在 `data/.config.yaml` 加上 `voice_devices`，执行 `docker compose up -d --build xiaozhi-esp32-server`。
-4. 终端配置的 `websocket_url` 改回 18000 端口，重启计划任务；停掉并行后端：`docker compose -f docker-compose.voice-terminal.yml down`。
+2026-10-07 已在 mini PC 上完成：小爱和书房蓝牙音箱共用生产后端（18000），并行后端已停掉。
 
-回滚：把备份镜像重新打回 `smooth-audio` 标签，再重建容器；终端改回 18100。
+1. 备份：`docker tag local/xiaozhi-esp32-server:smooth-audio local/xiaozhi-esp32-server:smooth-audio-backup`，
+   部署目录里的 `data/.config.yaml`、`docker-compose.yml` 和 `xiaozhi-server-overrides` 各留一份 `*.before-single-backend`。
+2. 合并到 `main`。线上 Hermes provider 挂的是 mini PC 上 open-xiaoai 目录里的 `deploy/hermes/xiaozhi-provider/hermes.py`，确认它和 `main` 一致。
+3. 用 `deploy/sherpa-tts/xiaozhi-server-overrides`（和 `xiaozhi-server-overrides-vt` 相同）替换部署目录里的 `xiaozhi-server-overrides`；
+   把 `data-vt/.config.yaml` 里的 `EdgeStreamTTS` 和 `voice_devices` 两段原样加进 `data/.config.yaml`（端口保持 18000）；
+   执行 `docker compose up -d --build xiaozhi-esp32-server`。
+4. 终端配置的 `websocket_url` 改成 18000 端口（原文件留了 `terminal.toml.before-single-backend`），重启计划任务；
+   停掉并行后端：`docker compose -f docker-compose.voice-terminal.yml down`。
+
+回滚：把 `*.before-single-backend` 改回原名，`smooth-audio-backup` 重新打回 `smooth-audio` 标签后
+`docker compose up -d xiaozhi-esp32-server`；需要并行后端时再 `docker compose -f docker-compose.voice-terminal.yml up -d`，终端改回 18100。
 
 ## 安装（Windows）
 
@@ -161,4 +168,3 @@ $env:VT_BACKEND_URL = 'ws://127.0.0.1:18100/xiaozhi/v1/'
 - Docker 虚拟机时钟偏慢（见上面的 `send_interval_ms`）。在虚拟机里把时钟源从 `tsc` 换成 `hyperv_clocksource_tsc_page` 或 `acpi_pm` 都没有改善，已改回 `tsc`。
 - Windows 11 的 `System32\onnxruntime.dll` 是旧版（1.17）。`sherpa-onnx-core` 必须安装（pyproject 已显式声明），否则 sherpa-onnx 会加载系统里的旧版并在创建模型时崩溃。
 - 在 PowerShell 5.1 里，`.ps1` 脚本要么全用 ASCII，要么存成带 BOM 的 UTF-8。
-- 问“你是哪台音箱”时，模型有时仍会说自己是客厅的小爱：线上 Hermes 的 `SOUL.md` 写的是“运行在一台小爱音箱上”。仓库里的 `deploy/hermes/profile/SOUL.md` 已改成多设备的说法，切换到单一后端时一起部署；按房间执行的指令不受影响。
