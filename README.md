@@ -13,7 +13,7 @@
 
 **真正的智能不应被预设的代码逻辑所束缚，而应像生命体般在交互中进化。**
 
-现在，这句话开始成真。Open-XiaoAI 接管小爱音箱的“耳朵”和“嘴巴”，接入小智服务端和 [Hermes Agent](https://github.com/NousResearch/hermes-agent)，再通过 Home Assistant 连上家里的设备。住在音箱里的“小七”：
+现在，这句话开始成真。Open-XiaoAI 接管小爱音箱的“耳朵”和“嘴巴”，接入小智服务端和 [Hermes Agent](https://github.com/NousResearch/hermes-agent)，再通过 Home Assistant 连上家里的设备：不只米家，海尔智家等其他品牌的设备也一样。住在音箱里的“小七”：
 
 - **会做事**：说一句话，设备真的开关；查状态先去看，不凭印象回答。
 - **会安排**：“两个小时后关鱼缸灯”，到点自己执行，做完说一声。
@@ -39,6 +39,19 @@
 | “我睡觉了” | 一次完成关灯、按记忆里的偏好设置空调、检查窗户 |
 | “记住我睡觉时空调开 26 度” | 写进长期记忆，以后自动参考 |
 | 在书房问“这个房间的灯开着吗” | 书房的音箱知道自己在书房，去查书房灯 |
+
+### 不只米家：一个小七管全屋
+
+小七不直接对接某个品牌，而是通过 [Home Assistant](https://www.home-assistant.io/) 控制设备，所以不同品牌的设备能放在一起说、一起联动。比如“洗衣机洗完了提醒我”，洗衣机是海尔的，播报用的是小米的小爱音箱。
+
+作者家里的 15 台设备、300 多个可控制和查询的项目，已经全部接入小七，日常在用：
+
+| 品牌 / 接入方式 | 设备 |
+| --- | --- |
+| **米家**：小米官方 [Xiaomi Home](https://github.com/XiaoMi/ha_xiaomi_home) 集成，11 台 | 五个房间的灯、Aqara 墙壁开关（单击 / 双击 / 长按）、鱼缸插座、电风扇、红外遥控的电视、水浸传感器、小爱音箱 |
+| **海尔智家**：通过 HACS 安装的 [Haier](https://github.com/banto6/haier) 集成，4 台 | 冰箱（冷藏 / 冷冻温度、门状态）、滚筒洗衣机（洗涤阶段、剩余时间）、干衣机、净水机 |
+
+其他 Home Assistant 能接入的品牌和平台，接进来后也可以交给小七，作者实测过的是米家和海尔。新设备接入后，在 Home Assistant 的“设置 → 语音助手”里把它设为公开，再重新生成一次设备表，小七就认识它了。👉 [Home Assistant 接入米家与海尔](deploy/homeassistant/README.md)
 
 ### 不需要人操作
 
@@ -91,7 +104,7 @@
 其他房间：USB 麦克风 / ESP32 小智硬件 ─────┘  唤醒·识别·合成    │
                                                               ├─ 长期记忆 / Skills / 联网搜索
                                                               ├─ 定时任务
-                                                              └─ Home Assistant
+                                                              └─ Home Assistant ── 米家、海尔智家……
                                                                   ├─ 设备控制与状态查询
                                                                   ├─ 场景（脚本）与联动（自动化）
                                                                   └─ 小七播报 → 客厅小爱
@@ -153,7 +166,7 @@
 1. 刷机更新小爱音箱补丁固件，开启并 SSH 连接到小爱音箱 👉 [教程](docs/flash.md) · [视频：用 AI 帮你刷机](https://www.bilibili.com/video/BV1Lph86ZEfd)
 2. 在小爱音箱上安装 Client 端补丁程序，使用本仓库 [Releases](https://github.com/OwnDing/open-xiaoai/releases) 里 `client-` 开头的版本 👉 [教程](packages/client-rust/README.md)
 3. 部署小爱桥接和小智服务端 👉 [小爱音箱接入小智 AI](examples/xiaozhi/README.md) · [TTS 输出模式](deploy/sherpa-tts/README.md)
-4. 部署 Hermes 和 Home Assistant，定时任务、场景与联动、主动播报随 Hermes 配置一起安装，装好就能用语音教 👉 [Hermes 部署](deploy/hermes/README.md) · [Home Assistant](deploy/homeassistant/README.md)
+4. 部署 Home Assistant 并接入米家、海尔等设备，再部署 Hermes。定时任务、场景与联动、主动播报随 Hermes 配置一起安装，装好就能用语音教 👉 [Home Assistant](deploy/homeassistant/README.md) · [Hermes 部署](deploy/hermes/README.md)
 
 **不刷机：普通蓝牙 / USB 音箱**
 
@@ -168,6 +181,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [Home Assistant 接入](deploy/homeassistant/README.md) | 米家官方集成、HACS 与海尔智家集成、让小七认识新设备 |
 | [Hermes 部署说明](deploy/hermes/README.md) | 接入方式、定时任务、语音教的场景与联动、主动播报、工具调用防护 |
 | [电脑语音终端](examples/voice-terminal/README.md) | 安装、配置、开机自启、多设备共用一个后端 |
 | [TTS 输出模式](deploy/sherpa-tts/README.md) | 小爱原生音色与 Sherpa 流式语音的切换和调优 |
