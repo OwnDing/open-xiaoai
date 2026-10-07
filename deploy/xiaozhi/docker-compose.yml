@@ -1,18 +1,27 @@
 services:
   open-xiaoai-xiaozhi:
-    image: local/open-xiaoai-xiaozhi:smooth-audio
+    image: local/open-xiaoai-xiaozhi:link-resilience
     container_name: open-xiaoai-xiaozhi
     restart: unless-stopped
     environment:
       PYTHONUNBUFFERED: "1"
+      OPEN_XIAOAI_HEALTH_LOG: /app/logs/audio-health.jsonl
       XIAOZHI_TTS_OUTPUT_MODE: ${XIAOZHI_TTS_OUTPUT_MODE:-sherpa}
     ports:
       - "4399:4399"
     volumes:
+      - audio-health:/app/logs
       - ../../examples/xiaozhi/config.py:/app/config.py
+      - ../../examples/xiaozhi/xiaozhi/xiaoai.py:/app/xiaozhi/xiaoai.py:ro
+      - ../../examples/xiaozhi/xiaozhi/services/audio/health.py:/app/xiaozhi/services/audio/health.py:ro
       - ../../examples/xiaozhi/xiaozhi/event.py:/app/xiaozhi/event.py:ro
       - ../../examples/xiaozhi/xiaozhi/xiaozhi.py:/app/xiaozhi/xiaozhi.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/native_tts.py:/app/xiaozhi/services/native_tts.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/audio/kws/__init__.py:/app/xiaozhi/services/audio/kws/__init__.py:ro
+      - ../../examples/xiaozhi/xiaozhi/services/audio/kws/keywords.py:/app/xiaozhi/services/audio/kws/keywords.py:ro
+      - ../../examples/xiaozhi/xiaozhi/services/audio/kws/sherpa.py:/app/xiaozhi/services/audio/kws/sherpa.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/audio/vad/__init__.py:/app/xiaozhi/services/audio/vad/__init__.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/protocols/websocket_protocol.py:/app/xiaozhi/services/protocols/websocket_protocol.py:ro
+
+volumes:
+  audio-health:

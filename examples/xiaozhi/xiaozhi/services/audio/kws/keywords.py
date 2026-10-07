@@ -27,12 +27,27 @@ def get_args():
     bpe_model = get_model_file_path("bpe.model")
     output = get_model_file_path("keywords.txt")
     keywords = APP_CONFIG["wakeup"]["keywords"]
+    thresholds = APP_CONFIG["wakeup"].get("keyword_thresholds") or {}
     texts = [f"{keyword.upper()}" for keyword in keywords]
     return locals()
 
 
+def keyword_line(keyword, tokens, thresholds):
+    """One keywords.txt line; `#t` overrides the spotter's threshold for this word only."""
+    line = "".join(tokens)
+    parts = [" ".join(tokens)]
+    threshold = thresholds.get(keyword)
+    if threshold is not None:
+        parts.append(f"#{float(threshold)}")
+    if not re.match(r"^[▁A-Z\s]+$", line):
+        parts.append(f"@{line}")
+    return " ".join(parts)
+
+
 def main():
     args = get_args()
+    for keyword in set(args["thresholds"]) - set(args["keywords"]):
+        print(f"⚠️ keyword_thresholds 里的 {keyword!r} 不在 keywords 中，已忽略")
     encoded_texts = text2token(
         args["texts"],
         tokens=args["tokens"],
@@ -40,12 +55,8 @@ def main():
         bpe_model=args["bpe_model"],
     )
     with open(args["output"], "w", encoding="utf8") as f:
-        for _, txt in enumerate(encoded_texts):
-            line = "".join(txt)
-            if re.match(r"^[▁A-Z\s]+$", line):
-                f.write(" ".join(txt) + "\n")
-            else:
-                f.write(" ".join(txt) + f" @{line}" + "\n")
+        for keyword, txt in zip(args["keywords"], encoded_texts):
+            f.write(keyword_line(keyword, txt, args["thresholds"]) + "\n")
 
 
 if __name__ == "__main__":

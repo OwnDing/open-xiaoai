@@ -1,0 +1,4 @@
+FROM local/xiaozhi-esp32-server:voice-terminals
+COPY deploy/sherpa-tts/xiaozhi-server-overrides/audio_health.py /opt/xiaozhi-esp32-server/core/utils/audio_health.py
+COPY deploy/sherpa-tts/xiaozhi-server-overrides/patch_audio_health.py /tmp/patch_audio_health.py
+RUN python /tmp/patch_audio_health.py && rm /tmp/patch_audio_health.py

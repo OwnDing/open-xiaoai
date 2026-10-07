@@ -1,9 +1,10 @@
 use open_xiaoai::services::audio::config::AudioConfig;
 use open_xiaoai::services::monitor::kws::KwsMonitor;
 use serde_json::json;
-use std::time::Duration;
-use tokio::time::sleep;
-use tokio_tungstenite::connect_async;
+use std::time::{Duration, Instant};
+use tokio::net::{lookup_host, TcpSocket};
+use tokio::time::{sleep, timeout};
+use tokio_tungstenite::{client_async, MaybeTlsStream};
 
 use open_xiaoai::base::AppError;
 use open_xiaoai::base::VERSION;
@@ -15,6 +16,19 @@ use open_xiaoai::services::connect::message::{MessageManager, WsStream};
 use open_xiaoai::services::connect::rpc::RPC;
 use open_xiaoai::services::monitor::instruction::InstructionMonitor;
 use open_xiaoai::services::monitor::playing::PlayingMonitor;
+use open_xiaoai::utils::audio_health::emit;
+
+/// Each step of connecting has its own deadline, so a lossy network cannot
+/// leave the client waiting on a handshake that will never finish.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Seconds from the start of the 1st, 2nd, ... failed attempt to the next one;
+/// then one every 5 s. A timed-out attempt has already waited, so the next
+/// starts at once. An attempt costs a few SYNs, and a short cap means a quick
+/// return once the network is back.
+const RETRY_DELAYS: [u64; 3] = [1, 2, 5];
+/// Kernel send buffer (Linux doubles it): about 1 s of audio. Audio that falls
+/// further behind is dropped in the app queue rather than piling up here.
+const SEND_BUFFER_BYTES: u32 = 16 * 1024;
 
 struct AppClient {
     kws_monitor: KwsMonitor,
@@ -32,25 +46,60 @@ impl AppClient {
     }
 
     pub async fn connect(&self, url: &str) -> Result<WsStream, AppError> {
-        let (ws_stream, _) = connect_async(url).await?;
+        let host = url.split("://").last().unwrap_or(url);
+        let host = host.split('/').next().unwrap_or(host);
+        let host = if host.contains(':') { host.to_string() } else { format!("{host}:80") };
+        let addr = timeout(CONNECT_TIMEOUT, lookup_host(host))
+            .await
+            .map_err(|_| "resolve timeout")??
+            .next()
+            .ok_or("no address for server")?;
+        let socket = if addr.is_ipv4() { TcpSocket::new_v4()? } else { TcpSocket::new_v6()? };
+        socket.set_send_buffer_size(SEND_BUFFER_BYTES)?;
+        let tcp = timeout(CONNECT_TIMEOUT, socket.connect(addr))
+            .await
+            .map_err(|_| "connect timeout")??;
+        tcp.set_nodelay(true)?;
+        let (ws_stream, _) = timeout(CONNECT_TIMEOUT, client_async(url, MaybeTlsStream::Plain(tcp)))
+            .await
+            .map_err(|_| "handshake timeout")??;
         Ok(WsStream::Client(ws_stream))
     }
 
     pub async fn run(&mut self) {
         let url = std::env::args().nth(1).expect("❌ 请输入服务器地址");
         println!("✅ 已启动");
+        // Never gives up: the speaker keeps retrying until the server is back.
+        let mut failures = 0usize;
         loop {
-            let Ok(ws_stream) = self.connect(&url).await else {
-                sleep(Duration::from_secs(1)).await;
-                continue;
+            let started = Instant::now();
+            let ws_stream = match self.connect(&url).await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    let delay = Duration::from_secs(RETRY_DELAYS[failures.min(RETRY_DELAYS.len() - 1)])
+                        .saturating_sub(started.elapsed());
+                    failures += 1;
+                    emit(
+                        "connect_error",
+                        json!({"error": error.to_string(), "attempt": failures,
+                        "retry_in_ms": delay.as_millis() as u64}),
+                    );
+                    sleep(delay).await;
+                    continue;
+                }
             };
+            failures = 0;
+            emit("connected", json!({}));
             println!("✅ 已连接: {:?}", url);
             self.init(ws_stream).await;
-            if let Err(e) = MessageManager::instance().process_messages().await {
-                eprintln!("❌ 消息处理异常: {}", e);
-            }
+            let reason = match MessageManager::instance().process_messages().await {
+                Ok(()) => "closed by server".to_string(),
+                Err(e) => e.to_string(),
+            };
             self.dispose().await;
-            eprintln!("❌ 已断开连接");
+            emit("disconnected", json!({"reason": reason}));
+            eprintln!("❌ 已断开连接: {}", reason);
+            sleep(Duration::from_secs(1)).await;
         }
     }
 
@@ -130,9 +179,9 @@ async fn start_recording(request: Request) -> Result<Response, AppError> {
         .and_then(|payload| serde_json::from_value::<AudioConfig>(payload).ok());
     AudioRecorder::instance()
         .start_recording(
-            |bytes| async {
+            |bytes, meta| async {
                 MessageManager::instance()
-                    .send_stream("record", bytes, None)
+                    .send_stream_realtime("record", bytes, Some(meta))
                     .await
             },
             config,

@@ -92,12 +92,69 @@ RETRY_NOTE = (
     "现在必须调用 ha_call_service 真正执行，需要确认状态时调用 ha_get_state，"
     "再根据工具结果回答。不要照抄聊天记录里以前的回答。）"
 )
+# A command for later ("两个小时后关掉鱼缸灯", "三点关空调", "待会儿开灯") must become
+# a scheduled job; RETRY_NOTE would push it to run now. "几点" is a question,
+# so only concrete numbers count.
+NUMBER = r"(?:\d+|[零一二两三四五六七八九十]+)"
+LATER_WORDS = re.compile(
+    NUMBER + r"?\s*个?\s*半?\s*(?:小时|钟头|分钟)\s*(?:以?后|之后|过后)"
+    r"|" + NUMBER + r"\s*点(?:半|钟|" + NUMBER + r"分?)?"
+    r"|\d{1,2}\s*[:：]\s*\d{2}"
+    r"|待会儿?|等会儿?|过一会儿?|一会儿(?:以?后|再)|晚点|定时|到点"
+)
+# Right after the agent confirmed a schedule ("好，十一点整关鱼缸插座"), a vague
+# 开/关 with no device and no time ("会关，现在会关", said to someone else in the
+# room) was taken as "switch it off now". Such a turn gets UNCLEAR_NOTE instead.
+SCHEDULE_CONFIRMED = re.compile(r"(?:" + LATER_WORDS.pattern + r")[^，。？！,.?!]{0,8}(?:关|开|调)")
+VAGUE_ACTION = re.compile(r"关|开(?!心|始|玩|会|学|车|门见山)|调(?!皮)")
+UNCLEAR_NOTE = (
+    "（系统提示：你刚安排了定时任务，这句话没说是哪个设备，也没说时间，可能是家里人之间在说话。"
+    "这一轮不要调用任何工具：如果是在问你，就直接回答；听不出是不是要你现在动手，"
+    "就用一句话问清楚，例如“是现在就关，还是等到点再关？”。）"
+)
+# Teaching a scene or linkage ("以后我说‘我回来了’就开客厅灯", "当洗衣机洗完的时候提醒我")
+# mentions devices and actions, but the agent must first read the rule back and
+# ask; forcing a tool call there would switch the device now instead.
+RULE_WORDS = re.compile(
+    r"以后.{0,4}(我|你)?.{0,2}(说|讲|喊)|每当|每次.{0,12}(就|都)|当.{1,24}(的时候|时候|时)"
+    r"|如果.{1,24}(就|的话)|一.{1,12}就|场景|联动|自动化|规则|口令|每天|每晚|每周|每个?星期"
+    # "漏水了马上告诉我", "洗完了提醒我"; not "告诉我书房灯开着没" (a state question).
+    r"|了.{0,4}(就|马上|立刻|立即|要)?(提醒|告诉|通知)我"
+)
+# A command may be unclear or overheard ("会关，现在会关" said to someone else right
+# after "11点关鱼缸灯"); asking back claims nothing, so it may stand without a tool.
+# A question that also claims success ("好了，灯关了，还要别的吗？") may not.
+QUESTION_END = re.compile(r"[？?]\s*$")
+DONE_CLAIM = re.compile(r"好了|搞定|已经|已(开|关|调|设)|(开|关|调|设)(好|了)|掉了")
+
+# After "……要我保存吗？" a "好" must reach the home_rules tool: the model has
+# answered "好了，保存好了" without saving anything.
+ASKED_TO_SAVE = re.compile(r"保存吗|要我保存|存下来吗|要不要保存|删掉吗|要我删")
+AGREEMENT = re.compile(r"^(好|好的|好啊|好吧|可以|行|行的|嗯|嗯嗯|对|对的|是|是的|没问题|确认|要|要的|保存|保存吧|存吧|删吧|删掉吧)$")
+RULE_TOOLS = "mcp__home_rules__"
+SAVE_RETRY_NOTE = (
+    "（系统提示：用户已经同意了，但你上一次没有调用 mcp__home_rules__home_rule_save"
+    "（或 home_rule_delete）就回答了，其实什么都没有保存。现在只为你上一句刚问过的那一项调用它"
+    "（保存时 confirmed 为 true），更早的已经处理过，不要再保存一次；再根据工具结果回答。）"
+)
+SCHEDULE_RETRY_NOTE = (
+    "（系统提示：这是设备控制请求，但你上一次没有调用任何工具就回答了。"
+    "用户要在之后某个时间执行的，必须调用 cronjob_manage 创建一次性定时任务"
+    "（action 为 create，schedule 用 in 2h 这样的时长或带日期的时间，"
+    "prompt 写明调用 ha_call_service 对哪个实体做什么，deliver 为 local），不要现在就执行；"
+    "用户要现在执行的，调用 ha_call_service。再根据工具结果回答。）"
+)
 
 
 CONTEXT_BLOCK = re.compile(r"<context>(.*?)</context>", re.S)
 # xiaozhi refreshes the time on every call; Hermes knows the date but not the
 # time of day or the device's city. Its weather line is deliberately dropped.
-KEPT_CONTEXT = ("Current time", "Today's date", "Today's lunar date", "Device location")
+# Device room / Reply style are per-device lines from voice_devices (xiaozhi
+# server overrides); devices without an entry simply don't have them.
+KEPT_CONTEXT = (
+    "Current time", "Today's date", "Today's lunar date", "Device location",
+    "Device room", "Reply style",
+)
 
 
 def slim_system_prompt(content):
@@ -132,6 +189,37 @@ def is_control_request(text):
     return bool(DEVICE_WORDS.search(text) and COMMAND_WORDS.search(text))
 
 
+def confirms_rule(dialogue, request):
+    """The user agreed to the save/delete the assistant just asked about."""
+    before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
+    asked = before and before[-1].get("role") == "assistant" and ASKED_TO_SAVE.search(_message_text(before[-1]))
+    return bool(asked and AGREEMENT.match(_spoken(request)))
+
+
+def is_clarifying(reply):
+    reply = reply.strip()
+    return bool(QUESTION_END.search(reply)) and not DONE_CLAIM.search(reply)
+
+
+def is_unclear_after_schedule(dialogue, request):
+    """A vague 开/关 (no device, no time) right after the agent confirmed a schedule."""
+    before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
+    if not before or before[-1].get("role") != "assistant":
+        return False
+    reply = _message_text(before[-1]).strip()
+    if QUESTION_END.search(reply) or not SCHEDULE_CONFIRMED.search(reply):
+        return False
+    return bool(VAGUE_ACTION.search(request) and not is_control_request(request) and not LATER_WORDS.search(request))
+
+
+def is_rule_request(text):
+    return bool(RULE_WORDS.search(text))
+
+
+def is_scheduled_control(text):
+    return is_control_request(text) and bool(LATER_WORDS.search(text))
+
+
 def is_state_question(text):
     return bool(
         STATE_SUBJECTS.search(text)
@@ -147,6 +235,7 @@ def _spoken(text):
 
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
+LATIN = re.compile(r"[A-Za-z]")
 LATIN_WORDS = re.compile(r"[A-Za-z]{2,}")
 
 
@@ -271,8 +360,10 @@ class LLMProvider(LLMProviderBase):
                 yield value
                 continue
             held += value
-            if not CJK.search(held) and LATIN_WORDS.search(held):
-                continue  # possibly an English lead-in; wait for Chinese or a tool
+            if not CJK.search(held) and LATIN.search(held):
+                # Possibly an English lead-in, which may arrive a letter at a
+                # time ("I", "'ll check..."): wait for Chinese or a tool.
+                continue
             held = _drop_english_lead_in(held)
             waiting = False
             while True:
@@ -319,11 +410,25 @@ class LLMProvider(LLMProviderBase):
         users = [m for m in dialogue if m.get("role") == "user"]
         request = _message_text(users[-1]) if users else ""
 
-        if self.tool_guard and is_control_request(request):
+        if self.tool_guard and is_unclear_after_schedule(dialogue, request):
+            logger.bind(tag=TAG).warning(f"刚定好定时任务，这句没说设备和时间，只回答或反问: {request}")
+            dialogue = self._with_note(dialogue, request, UNCLEAR_NOTE)
+            required = note = reason = None
+        elif self.tool_guard and confirms_rule(dialogue, request):
+            required, note, reason = RULE_TOOLS, SAVE_RETRY_NOTE, "确认保存后未调用规则工具"
+        elif self.tool_guard and is_rule_request(request):
+            # Teaching or managing a scene/linkage: answered normally (see RULE_WORDS).
+            required = note = reason = None
+        elif self.tool_guard and is_scheduled_control(request):
+            # Any tool satisfies it: a time-of-day mention may still mean "now".
+            required, note, reason = None, SCHEDULE_RETRY_NOTE, "定时控制请求未调用工具"
+        elif self.tool_guard and is_control_request(request):
             required, note, reason = None, RETRY_NOTE, "设备控制请求未调用工具"
         elif self.tool_guard and is_state_question(request):
             required, note, reason = "ha_", STATE_RETRY_NOTE, "设备状态问题未查询"
         else:
+            required = note = reason = None
+        if note is None:
             state = {"spoken": False, "held": ""}
             yield from self._clean(self._with_search_filler(self._events(dialogue), state))
             if state["spoken"]:
@@ -359,8 +464,12 @@ class LLMProvider(LLMProviderBase):
         if state["used_tool"]:
             return
 
-        held = state["held"]
-        logger.bind(tag=TAG).warning(f"{reason}，已丢弃回答并重试: {request} -> {''.join(held)[:60]}")
+        held = "".join(state["held"])
+        if note in (RETRY_NOTE, SCHEDULE_RETRY_NOTE) and is_clarifying(held):
+            logger.bind(tag=TAG).warning(f"{reason}，但回答是反问，保留: {request} -> {held[:60]}")
+            yield from self._clean(iter([held]))
+            return
+        logger.bind(tag=TAG).warning(f"{reason}，已丢弃回答并重试: {request} -> {held[:60]}")
         retry = self._events(self._with_note(dialogue, request, note))
         yield from self._clean(self._with_search_filler(retry, {"spoken": False, "held": ""}))
 

@@ -1,0 +1,56 @@
+# One file per terminal. Relative paths are relative to this file.
+
+[terminal]
+name = "书房蓝牙音箱"
+# Unique per terminal. The backend keys its per-device settings on this ID
+# (voice_devices in data/.config.yaml: server audio, TTS, room, reply style).
+# A locally administered MAC-style value.
+device_id = "02:76:74:00:00:01"
+
+[server]
+websocket_url = "ws://127.0.0.1:18100/xiaozhi/v1/"
+access_token = ""
+
+[audio]
+# Names as `python -m voice_terminal devices --host-api WASAPI` prints them.
+input = "耳机 (京鱼座蓝牙小黑胶)"
+output = "耳机 (京鱼座蓝牙小黑胶)"
+host_api = "WASAPI"
+# P0.5 corpus: high-pass + WebRTC noise suppression + gain did best on this mic.
+frontend = ["hpf", "ns", "agc"]
+output_gain = 1.0
+# After the speaker runs dry, queue this much before playing again (avoids crackle).
+playback_buffer_ms = 240
+
+[wake]
+keywords = ["你好小七"]
+model_dir = "models/kws"
+# The bridge uses 0.2; the 8 kHz Bluetooth mic needs a looser threshold.
+threshold = 0.05
+score = 2.0
+
+[vad]
+model = "models/silero_vad.onnx"
+threshold = 0.5
+min_speech_ms = 250
+min_silence_ms = 500
+short_utterance_ms = 800
+short_utterance_silence_ms = 1000
+pre_roll_ms = 800
+max_utterance_s = 15
+
+[session]
+idle_timeout_s = 20
+# Echo of the speaker's own voice: ~210 ms round trip + ~500 ms room tail (Bluetooth).
+tts_end_guard_ms = 700
+no_reply_timeout_s = 6
+reply_timeout_s = 90
+# Made by scripts/fetch-assets.ps1 in the same Edge voice as the answers
+# (-PromptEngine sherpa makes WAV files in the Sherpa voice instead).
+wake_prompt = "prompts/wake.mp3"
+no_reply_prompt = "prompts/no_reply.mp3"
+goodbye_prompt = "prompts/goodbye.mp3"
+
+[control]
+host = "127.0.0.1"
+port = 18110

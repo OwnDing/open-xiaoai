@@ -170,6 +170,7 @@ class EventStateTests(unittest.IsolatedAsyncioTestCase):
         relisten = asyncio.Event()
         stopped = asyncio.Event()
         prompts = []
+        manager.current_step = Step.on_tts_start
 
         class FakeProtocol:
             async def send_abort_speaking(self, reason):

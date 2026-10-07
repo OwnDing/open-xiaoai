@@ -1,0 +1,5 @@
+FROM local/open-xiaoai-xiaozhi:audio-health
+COPY examples/xiaozhi/xiaozhi/event.py /app/xiaozhi/event.py
+COPY examples/xiaozhi/xiaozhi/xiaoai.py /app/xiaozhi/xiaoai.py
+COPY examples/xiaozhi/xiaozhi/services/audio/kws/__init__.py /app/xiaozhi/services/audio/kws/__init__.py
+COPY examples/xiaozhi/xiaozhi/services/audio/kws/sherpa.py /app/xiaozhi/services/audio/kws/sherpa.py

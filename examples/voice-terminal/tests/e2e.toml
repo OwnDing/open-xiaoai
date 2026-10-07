@@ -1,0 +1,26 @@
+# End-to-end test terminal: WAV clips in, WAV out (see README "测试").
+[terminal]
+name = "e2e"
+device_id = "02:76:74:00:00:02"
+
+[server]
+websocket_url = "ws://127.0.0.1:18100/xiaozhi/v1/"
+
+[audio]
+frontend = ["hpf", "ns", "agc"]
+
+[wake]
+model_dir = "../models/kws"
+threshold = 0.05
+
+[vad]
+model = "../models/silero_vad.onnx"
+
+[session]
+idle_timeout_s = 8
+wake_prompt = "../prompts/wake.mp3"
+no_reply_prompt = "../prompts/no_reply.mp3"
+goodbye_prompt = "../prompts/goodbye.mp3"
+
+[control]
+port = 18111

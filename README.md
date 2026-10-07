@@ -1,7 +1,8 @@
 > [!NOTE]
 > **维护状态：活跃更新中。** 本 Fork 正在实际环境中持续使用和优化，
 > 当前重点维护小智 AI 接入、语音链路稳定性、小爱音箱原生音色输出，
-> 以及通过 Hermes Agent 为音箱增加记忆、联网搜索和智能家居控制。
+> 通过 Hermes Agent 为音箱增加记忆、联网搜索和智能家居控制，
+> 以及不依赖小爱、用电脑上的普通蓝牙 / USB 音箱做语音终端。
 
 # Open-XiaoAI
 
@@ -65,6 +66,32 @@
 新闻约 2.2 秒开始回应。部署方法见 [Hermes 部署说明](deploy/hermes/README.md)，
 完整测试数据见 [接入与延迟测试报告](docs/xiaoai-xiaozhi-hermes-latency-report.md)。
 
+### 不用小爱音箱：普通蓝牙音箱也能当家庭语音助手
+
+一台带麦克风的普通蓝牙音箱（或 USB 麦克风 + 音箱），接在家里常开的电脑上，
+就是一个独立的语音终端：说“你好小七”唤醒，问问题、查天气、控制和查询家里的设备，
+不需要刷机，也不需要小爱音箱。已有的小爱音箱照常使用，两者共用同一套小智服务端、
+Hermes 和 Home Assistant，谁听到的问题就由谁回答。
+
+```text
+书房：蓝牙音箱（带麦克风）⇄ 电脑语音终端 ──┐
+客厅：小爱音箱 ⇄ Open-XiaoAI 桥接 ─────────┼⇄ 小智服务端 ⇄ Hermes Agent ⇄ Home Assistant
+其他房间：USB 麦克风 / ESP32 小智硬件 ─────┘    └─ 每台设备单独配置：房间、TTS、回答方式
+```
+
+- **独立的设备**：每台终端有自己的设备 ID 和连接，各自唤醒、各自回答；多台同时提问互不串话。
+- **知道自己在哪个房间**：问“这个房间的灯开着吗”，书房的音箱会去查书房灯。
+  房间、TTS、回答方式都写在服务端配置里，按设备区分，不写死在程序中。
+- **按设备选音色**：电脑终端可用流式 Edge TTS（预建连接、边合成边播报），
+  也可用离线的 Sherpa；小爱继续用原生音色。实测说完后约 1.7～2.3 秒开始出声（含识别和大模型生成）。
+- **能长期放着用**：降噪前端、抖动缓冲、断线和蓝牙断开后自动恢复；
+  终端在 Windows 上以 SYSTEM 身份开机自启，不依赖远程桌面会话。
+
+目前在 Windows 11 mini PC + 京鱼座蓝牙小黑胶上验收。这台音箱的麦克风只有 8 kHz 通话音质，
+近距离唤醒和识别可用，远场效果一般；想要更好的收音，可以换 USB 会议麦克风。
+使用和部署方法见 👉 [电脑语音终端](examples/voice-terminal/README.md)，
+方案与测试记录见 [多终端语音接入方案](docs/cross-platform-voice-terminal-plan.md)。
+
 ## 你的声音 + 小爱音箱 = 无限可能
 
 👉 [小爱音箱 + Hermes Agent，让真正的 AI 管家进入你家](https://www.bilibili.com/video/BV1hhao6cEfq)
@@ -94,9 +121,10 @@
 ## 快速开始
 
 > [!IMPORTANT]
-> 本教程仅适用于 **小爱音箱 Pro（LX06）** 和 **Xiaomi 智能音箱 Pro（OH2P）** 这两款机型，**其他型号**的小爱音箱请勿直接使用！🚨
+> 刷机教程仅适用于 **小爱音箱 Pro（LX06）** 和 **Xiaomi 智能音箱 Pro（OH2P）** 这两款机型，**其他型号**的小爱音箱请勿直接使用！🚨
+> 没有这两款音箱？用电脑上的普通蓝牙 / USB 音箱也可以，见下方“不刷机”。
 
-本项目由 Client 端 + Server 端两部分组成，你可以按照以下顺序运行该项目：
+**小爱音箱**：本项目由 Client 端 + Server 端两部分组成，你可以按照以下顺序运行该项目：
 
 1. 刷机更新小爱音箱补丁固件，开启并 SSH 连接到小爱音箱 👉 [教程](docs/flash.md) · [视频：用 AI 帮你刷机](https://www.bilibili.com/video/BV1Lph86ZEfd)
 2. 在小爱音箱上安装运行 Client 端补丁程序 👉 [教程](packages/client-rust/README.md)
@@ -108,6 +136,13 @@
    - 👉 [小爱音箱接入 MiGPT（完美版）](examples/migpt/README.md)
    - 👉 [小爱音箱接入 Gemini Live API](examples/gemini/README.md)
    - 👉 [小爱音箱组立体声（支持不同型号机型）](examples/stereo/README.md)
+
+**不刷机：普通蓝牙 / USB 音箱**
+
+1. 在常开的电脑上部署小智服务端、Hermes 和 Home Assistant
+   👉 [Sherpa / 小智服务端](deploy/sherpa-tts/README.md) · [Hermes](deploy/hermes/README.md) · [Home Assistant](deploy/homeassistant/README.md)
+2. 把带麦克风的蓝牙音箱（或 USB 麦克风 + 音箱）接到电脑上，安装并运行语音终端
+   👉 [电脑语音终端](examples/voice-terminal/README.md)
 
 以上皆为抛砖引玉，你也可以亲手编写自己想要的功能，一切由你定义！
 

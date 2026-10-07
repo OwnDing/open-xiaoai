@@ -11,6 +11,26 @@ agent:
   # A household request should never need a long tool loop.
   max_turns: 8
   api_max_retries: 1
+  # Never available to any agent of this profile, including a scheduled job
+  # that names them in its own enabled_toolsets (which overrides
+  # platform_toolsets.cron below). Composite sets such as "debugging" stay
+  # off this list: they also carry web search, and their risky members are
+  # listed individually.
+  disabled_toolsets:
+    - terminal
+    - file
+    - code_execution
+    - browser
+    - computer_use
+    - delegation
+    - coding
+    - kanban
+    - image_gen
+    - video_gen
+    - vision
+    - tts
+    - todo
+    - connections
 
 # Only the tools the speaker needs. Everything else (terminal, files, browser,
 # code execution, delegation, computer use...) stays off for safety and to keep
@@ -23,6 +43,27 @@ platform_toolsets:
     - web
     - homeassistant
     - cronjob
+  # Scheduled jobs run unattended with auto-approval, from prompts written by
+  # the voice agent: give them Home Assistant only. Left unset, cron would get
+  # the full default set (terminal, files, code execution, browser...).
+  cron:
+    - homeassistant
+
+# Voice-taught scenes and linkages (stored as Home Assistant scripts and
+# automations) plus the script.xiaoqi_announce speaker script; see
+# mcp/home_rules. Only these two variables reach the server process.
+mcp_servers:
+  home_rules:
+    command: /opt/hermes/.venv/bin/python
+    args: ["-m", "home_rules.server"]
+    cwd: /opt/data/mcp
+    env:
+      HASS_URL: "${HASS_URL}"
+      HASS_TOKEN: "${HASS_TOKEN}"
+    # No generic resource/prompt helper tools: the server only offers its four tools.
+    tools:
+      resources: false
+      prompts: false
 
 memory:
   memory_enabled: true

@@ -48,7 +48,11 @@ impl PythonManager {
     }
 
     pub fn log(&self, text: String) {
-        let _ = self.eval(&format!("print('{}')", text));
+        Python::with_gil(|py| {
+            if let Ok(builtins) = py.import("builtins") {
+                let _ = builtins.call_method1("print", (text,));
+            }
+        });
     }
 
     pub fn eval(&self, script: &str) -> PyResult<()> {
