@@ -24,6 +24,11 @@ curl -sSfL https://gitee.com/idootop/artifacts/releases/download/open-xiaoai-cli
 ```
 
 > [!IMPORTANT]
+> 本仓库的客户端加了心跳、断线重连，音频改用二进制帧传输，必须和用本仓库编译的 Server 端配套使用（原作者预先构建的镜像解不开新格式，反之亦然）。
+>
+> 运行 init.sh 之前，先从 [Releases](https://github.com/OwnDing/open-xiaoai/releases) 里 `client-` 开头的版本下载 `client`，放到 `/data/open-xiaoai/client` 并 `chmod +x`。init.sh 和下面的 boot.sh 只在这个文件不存在时，才会从 gitee 下载原作者的客户端。
+
+> [!IMPORTANT]
 > 你可能需要先在电脑上运行其他演示程序，以获取 server 地址
 >
 > 注意安全！不要连接来路不明的 server 🚨
