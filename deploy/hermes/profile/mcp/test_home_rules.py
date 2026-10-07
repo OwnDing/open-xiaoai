@@ -232,10 +232,9 @@ class AnnounceTests(unittest.TestCase):
         self.assertEqual(set(config["fields"]), {"message", "urgent"})
         sequence = config["sequence"]
         self.assertEqual(sequence[2]["then"], [{"stop": "勿扰时段，非紧急播报不出声"}])
-        urgent = sequence[3]
-        self.assertEqual(urgent["then"][0]["action"], "switch.turn_off")
-        self.assertEqual(urgent["then"][-1]["action"], "switch.turn_on")
-        self.assertEqual(urgent["else"][0]["target"], {"entity_id": "notify.xiaomi_cn_1_oh2p_play_text_a_7_3"})
+        self.assertEqual(sequence[3]["target"], {"entity_id": "notify.xiaomi_cn_1_oh2p_play_text_a_7_3"})
+        # Do-not-disturb does not block play-text, so it is never switched.
+        self.assertEqual([step.get("action") for step in sequence if "action" in step], ["notify.send_message"])
 
     def test_script_without_do_not_disturb_just_speaks(self):
         speaker = {"play_text": "notify.x_play_text", "name": "x", "no_disturb": None, "quiet_period": None}

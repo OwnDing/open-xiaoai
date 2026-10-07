@@ -4,9 +4,9 @@ Linkages, reminders (cron jobs) and the agent itself call script.xiaoqi_announce
 with a message and an urgent flag. The quiet hours are the speaker's own
 do-not-disturb setting (switch + time period, editable in the Mi Home app),
 so there is nothing to configure here: outside them every message is spoken,
-inside them only urgent ones (water leak and other safety alarms). If the
-speaker's do-not-disturb would swallow an urgent message, it is switched off
-for the announcement and back on afterwards.
+inside them only urgent ones (water leak and other safety alarms). The
+speaker's do-not-disturb does not block play-text (tested on the OH2P), so an
+urgent message is simply spoken and do-not-disturb is left alone.
 """
 
 import re
@@ -59,23 +59,8 @@ def script_config(speaker):
         {"variables": {"quiet": QUIET_TEMPLATE, "is_urgent": "{{ urgent | default(false) | bool }}"}},
         {"if": [{"condition": "template", "value_template": "{{ quiet and not is_urgent }}"}],
          "then": [{"stop": "勿扰时段，非紧急播报不出声"}]},
+        play,
     ]
-    if speaker.get("no_disturb"):
-        dnd = {"entity_id": speaker["no_disturb"]}
-        sequence.append({
-            "if": [{"condition": "template", "value_template": "{{ quiet }}"}],
-            "then": [
-                {"action": "switch.turn_off", "target": dnd},
-                {"delay": {"seconds": 2}},
-                play,
-                # Long enough for the speaker to finish before quiet mode returns.
-                {"delay": {"seconds": "{{ [6, (message | length * 0.35) | round(0, 'ceil') | int + 3] | max }}"}},
-                {"action": "switch.turn_on", "target": dnd},
-            ],
-            "else": [play],
-        })
-    else:
-        sequence.append(play)
     return {
         "alias": "小七播报",
         "description": (f"由小七的家庭规则工具生成，请勿手动修改。在 {speaker['name']} 上播报；"

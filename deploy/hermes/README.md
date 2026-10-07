@@ -164,8 +164,8 @@ The server also installs (and keeps up to date) the HA script
 the XiaoAi speaker's play-text action (`notify.*_play_text_*`, found
 automatically). The quiet hours are the speaker's own do-not-disturb switch and
 time period (editable in the Mi Home app): inside them a non-urgent message is
-dropped; an urgent one switches do-not-disturb off, speaks and switches it back
-on. Linkages, reminders (cron jobs) and timed device actions all call it through
+dropped and an urgent one is spoken. Do-not-disturb does not block play-text
+(tested on the OH2P), so the script never switches it. Linkages, reminders (cron jobs) and timed device actions all call it through
 `ha_call_service` (domain `script`, service `xiaoqi_announce`). Only the
 living-room XiaoAi speaks; the voice terminals do not.
 
