@@ -61,5 +61,24 @@ class VADDurationTests(unittest.TestCase):
             on_silence.assert_called_once()
 
 
+class VADResumeTests(unittest.TestCase):
+    def setUp(self):
+        self.vad = _VAD()
+        self.vad.stream = Mock()
+
+    @patch("xiaozhi.services.audio.vad.get_env", return_value=True)
+    def test_each_listening_turn_starts_from_a_fresh_model_state(self, _):
+        with patch("xiaozhi.services.audio.vad.Silero") as silero:
+            self.vad.resume("speech")
+            silero.model.reset_states.assert_called_once()
+
+            # Waiting for the end of the same utterance keeps the state.
+            self.vad.resume("silence")
+            silero.model.reset_states.assert_called_once()
+
+            self.vad.resume("speech")
+            self.assertEqual(silero.model.reset_states.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

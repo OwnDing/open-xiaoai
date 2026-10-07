@@ -85,6 +85,14 @@ class _VAD:
         if not get_env("CLI"):
             return
 
+        if target == "speech":
+            # A new listening turn starts from a fresh Silero state. Carried
+            # over from earlier turns (it was never reset), it scored a clearly
+            # spoken "现在冰箱几度" below the threshold after hours of running,
+            # and the question was taken for silence. "silence" continues the
+            # same utterance, so its state is kept.
+            Silero.model.reset_states()
+
         self.paused = False
         self.target = target
         self.voiced_count = 0
