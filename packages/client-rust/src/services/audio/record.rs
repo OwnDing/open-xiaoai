@@ -14,6 +14,7 @@ use tokio::time::timeout;
 use crate::base::AppError;
 
 use super::config::{AudioConfig, AUDIO_CONFIG};
+use super::echo_ref::{EchoRefConfig, EchoRefDecimator};
 
 #[derive(PartialEq)]
 enum State {
@@ -29,6 +30,8 @@ pub struct AudioRecorder {
     state: Arc<Mutex<State>>,
     arecord_thread: Arc<Mutex<Option<Child>>>,
     read_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
+    /// What the running capture was started with; a different request restarts it.
+    active: Arc<Mutex<Option<(AudioConfig, Option<EchoRefConfig>)>>>,
 }
 
 static INSTANCE: LazyLock<AudioRecorder> = LazyLock::new(AudioRecorder::new);
@@ -39,6 +42,7 @@ impl AudioRecorder {
             state: Arc::new(Mutex::new(State::Idle)),
             arecord_thread: Arc::new(Mutex::new(None)),
             read_thread: Arc::new(Mutex::new(None)),
+            active: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -48,8 +52,13 @@ impl AudioRecorder {
 
     pub async fn stop_recording(&self) -> Result<(), AppError> {
         let mut state = self.state.lock().await;
+        self.stop_locked(&mut state).await;
+        Ok(())
+    }
+
+    async fn stop_locked(&self, state: &mut State) {
         if *state == State::Idle {
-            return Ok(());
+            return;
         }
 
         if let Some(read_thread) = self.read_thread.lock().await.take() {
@@ -61,7 +70,6 @@ impl AudioRecorder {
         }
 
         *state = State::Idle;
-        Ok(())
     }
 
     pub async fn start_recording<F, Fut>(
@@ -70,17 +78,47 @@ impl AudioRecorder {
         config: Option<AudioConfig>,
     ) -> Result<(), AppError>
     where
+        F: Fn(Vec<u8>, Value) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<usize, AppError>> + Send + 'static,
+    {
+        self.start_recording_with(on_stream, config, None).await
+    }
+
+    /// With `echo_ref`, frames are stereo S16 [microphone, playback loopback]
+    /// instead of mono, and their metadata says `"layout": "mic_ref"`.
+    pub async fn start_recording_with<F, Fut>(
+        &self,
+        on_stream: F,
+        config: Option<AudioConfig>,
+        echo_ref: Option<EchoRefConfig>,
+    ) -> Result<(), AppError>
+    where
         // Resolves to how many older queued packets were dropped to make room.
         F: Fn(Vec<u8>, Value) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<usize, AppError>> + Send + 'static,
     {
         let mut state = self.state.lock().await;
+        let requested_config = config.unwrap_or_else(|| (*AUDIO_CONFIG).clone());
+        let wanted = (requested_config.clone(), echo_ref.clone());
         if *state == State::Recording {
-            return Ok(());
+            if self.active.lock().await.as_ref() == Some(&wanted) {
+                return Ok(());
+            }
+            // The server asked for a different capture (e.g. it was updated to
+            // use the echo reference): restart instead of keeping the old one.
+            emit("capture_restart", json!({"echo_ref": echo_ref.is_some()}));
+            self.stop_locked(&mut state).await;
         }
 
-        let requested_config = config.unwrap_or_else(|| (*AUDIO_CONFIG).clone());
-        let capture_config = capture_config_for_recording(&requested_config);
+        if let Some(echo_ref) = &echo_ref {
+            echo_ref.validate(&requested_config)?;
+        }
+        let capture_config = match &echo_ref {
+            Some(echo_ref) => echo_ref.capture_config(&requested_config),
+            None => capture_config_for_recording(&requested_config),
+        };
+        let out_channels = if echo_ref.is_some() { 2 } else { requested_config.channels.max(1) };
+        let mut decimator = echo_ref.as_ref().map(EchoRefDecimator::new);
         let mut arecord_thread = spawn_arecord(&capture_config)?;
 
         let mut stdout = arecord_thread.stdout.take().unwrap();
@@ -91,7 +129,8 @@ impl AudioRecorder {
             "capture_start",
             json!({"capture_id": capture_id,
             "sample_rate": requested_config.sample_rate, "capture_bits": capture_config.bits_per_sample,
-            "wire_bits": requested_config.bits_per_sample, "channels": requested_config.channels}),
+            "wire_bits": requested_config.bits_per_sample, "channels": out_channels,
+            "echo_ref": decimator.is_some()}),
         );
         let weak = Arc::downgrade(&health);
         tokio::spawn(async move {
@@ -164,25 +203,32 @@ impl AudioRecorder {
                         while accumulated_data.len() >= target_size {
                             let data_to_send =
                                 accumulated_data.drain(..target_size).collect::<Vec<u8>>();
-                            let data_to_send = transform_stream_chunk(
-                                data_to_send,
-                                &requested_config,
-                                &capture_config,
-                            );
+                            let data_to_send = match decimator.as_mut() {
+                                Some(decimator) => decimator.process(&data_to_send),
+                                None => transform_stream_chunk(
+                                    data_to_send,
+                                    &requested_config,
+                                    &capture_config,
+                                ),
+                            };
                             if !data_to_send.is_empty() {
                                 let samples = data_to_send.len()
                                     / ((requested_config.bits_per_sample.max(8) / 8) as usize
-                                        * requested_config.channels.max(1) as usize);
+                                        * out_channels as usize);
                                 let meta = {
                                     let mut h = health.lock().unwrap();
                                     h.seq += 1;
-                                    let meta = json!({"capture_id": h.capture_id, "seq": h.seq,
+                                    let mut meta = json!({"capture_id": h.capture_id, "seq": h.seq,
                                         "sample_start": h.attempted_samples, "samples": samples,
-                                        "sample_rate": requested_config.sample_rate, "ts_ms": unix_ms()});
+                                        "sample_rate": requested_config.sample_rate, "ts_ms": unix_ms(),
+                                        "channels": out_channels});
+                                    if decimator.is_some() {
+                                        meta["layout"] = json!("mic_ref");
+                                    }
                                     h.attempted_samples += samples as u64;
                                     h.send_started = Some(Instant::now());
                                     if requested_config.bits_per_sample == 16 {
-                                        h.levels(&data_to_send);
+                                        h.levels(&data_to_send, out_channels as usize);
                                     }
                                     meta
                                 };
@@ -252,6 +298,7 @@ impl AudioRecorder {
         });
 
         self.read_thread.lock().await.replace(read_thread);
+        self.active.lock().await.replace(wanted);
 
         *state = State::Recording;
         Ok(())
@@ -314,8 +361,9 @@ impl CaptureHealth {
             clipped: 0,
         }
     }
-    fn levels(&mut self, data: &[u8]) {
-        for bytes in data.chunks_exact(2) {
+    /// Levels of the first channel (the microphone in stereo frames).
+    fn levels(&mut self, data: &[u8], channels: usize) {
+        for bytes in data.chunks_exact(2 * channels.max(1)) {
             let sample = i16::from_le_bytes([bytes[0], bytes[1]]);
             let value = sample as f64 / 32768.0;
             self.square_sum += value * value;
@@ -453,12 +501,25 @@ mod tests {
             .iter()
             .flat_map(|sample| sample.to_le_bytes())
             .collect::<Vec<_>>();
-        h.levels(&data);
+        h.levels(&data, 1);
         assert_eq!(h.level_samples, 4);
         assert_eq!(h.zeros, 2);
         assert_eq!(h.clipped, 2);
         assert_eq!(h.peak, 1.0);
         assert!(h.square_sum > 1.99);
+    }
+
+    #[test]
+    fn health_levels_of_stereo_frames_use_the_microphone_only() {
+        let mut h = CaptureHealth::new(&AUDIO_CONFIG);
+        let data = [i16::MAX, 0, 0, i16::MIN]
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect::<Vec<_>>();
+        h.levels(&data, 2);
+        assert_eq!(h.level_samples, 2);
+        assert_eq!(h.clipped, 1);
+        assert_eq!(h.zeros, 1);
     }
 
     #[test]
