@@ -160,7 +160,7 @@ class BargeInSessionTests(unittest.IsolatedAsyncioTestCase):
 
         speaker = SimpleNamespace(run_shell=AsyncMock())
         canceller = SimpleNamespace(near_end_ratio_db=lambda: near_end_db)
-        settings = {"prompt_tone": "/tone.opus", "keyword_tail_ms": 200, "near_end_min_db": min_db}
+        settings = {"prompt_tone": "/tone.opus", "keyword_tail_ms": 100, "near_end_min_db": min_db}
         with (
             patch.dict(event_module.APP_CONFIG, {"barge_in": settings}),
             patch("xiaozhi.event.get_env", return_value="1"),
@@ -184,7 +184,7 @@ class BargeInSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             calls,
             [("state", DeviceState.IDLE), ("gate",), ("stop_playback",), ("server_abort",),
-             ("vad", "speech", 48000 - 200 * 16)],
+             ("vad", "speech", 48000 - 100 * 16)],
         )
         speaker.run_shell.assert_awaited_once()
         self.assertIn("miplayer -f /tone.opus", speaker.run_shell.await_args.args[0])
@@ -244,6 +244,21 @@ class KWSDuringPlaybackTests(unittest.IsolatedAsyncioTestCase):
             wakeup.assert_awaited_once_with("你好小七", "kws")
 
 
+class EchoAwareVADTests(unittest.TestCase):
+    def test_frames_that_may_hold_echo_need_the_higher_threshold(self):
+        from xiaozhi.services.audio.vad import _VAD
+
+        with patch.dict(event_module.APP_CONFIG, {"barge_in": {"echo_vad_threshold": 0.7}}), \
+                patch("xiaozhi.services.audio.vad.set_vad"):
+            vad = _VAD()
+        with patch("xiaozhi.services.audio.vad.get_xiaoai", return_value=SimpleNamespace(echo_until=5000)):
+            self.assertEqual(vad.frame_threshold(4999), 0.7)
+            self.assertEqual(vad.frame_threshold(5000), vad.threshold)
+            self.assertEqual(vad.frame_threshold(None), vad.threshold)
+        with patch("xiaozhi.services.audio.vad.get_xiaoai", return_value=None):
+            self.assertEqual(vad.frame_threshold(0), vad.threshold)
+
+
 class InterruptedReplyTests(unittest.IsolatedAsyncioTestCase):
     async def test_tts_is_dropped_until_the_next_utterance_is_recognized(self):
         from xiaozhi.xiaozhi import XiaoZhi
@@ -291,6 +306,22 @@ class EchoPacketTests(unittest.TestCase):
             XiaoAI.on_input_packet((frames.tobytes(), json.dumps({**meta, "seq": 2})))
         out = np.frombuffer(stream.input.call_args.args[0], dtype="<i2")
         self.assertEqual(int(out[-1]), int(round(100 * XiaoAI.echo_gain)))
+
+    def test_playback_in_a_packet_opens_the_echo_window(self):
+        from xiaozhi.xiaoai import XiaoAI
+
+        XiaoAI.echo, XiaoAI.echo_until = None, -1
+        self.addCleanup(setattr, XiaoAI, "echo", None)
+        self.addCleanup(setattr, XiaoAI, "echo_until", -1)
+        frames = np.zeros((1440, 2), dtype="<i2")
+        meta = {"capture_id": "c", "seq": 1, "layout": "mic_ref"}
+        stream = SimpleNamespace(samples=16000, input=Mock())
+        with patch("xiaozhi.xiaoai.GlobalStream", stream), patch("xiaozhi.xiaoai.HEALTH"):
+            XiaoAI.on_input_packet((frames.tobytes(), json.dumps(meta)))
+            self.assertEqual(XiaoAI.echo_until, -1)  # nothing played
+            frames[100, 1] = 5
+            XiaoAI.on_input_packet((frames.tobytes(), json.dumps({**meta, "seq": 2})))
+        self.assertEqual(XiaoAI.echo_until, 16000 + 1440 + XiaoAI.echo.delay + 300 * 16)
 
     def test_mono_packets_pass_through(self):
         from xiaozhi.xiaoai import XiaoAI

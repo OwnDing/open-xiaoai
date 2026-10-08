@@ -165,7 +165,7 @@ class __EventManager:
         if rejected:
             print(f"🙉 忽略疑似小七自己的声音: {text} ({ratio:.1f} dB)")
             return
-        tail = int(get_barge_in_setting("keyword_tail_ms", 200)) * 16
+        tail = int(get_barge_in_setting("keyword_tail_ms", 100)) * 16
         self.listen_from = None if position is None else max(0, position - tail)
         print(f"✋ 打断小七: {text}")
         self._begin_session(Step.on_barge_in)

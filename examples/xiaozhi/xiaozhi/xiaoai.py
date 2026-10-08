@@ -48,6 +48,8 @@ class XiaoAI:
     echo = None  # SubbandEchoCanceller, created on the first stereo frame
     echo_gain = 1.0
     _echo_seen = None
+    # GlobalStream input up to this sample may still carry (cancelled) playback.
+    echo_until = -1
 
     @classmethod
     def setup_mode(cls):
@@ -99,6 +101,11 @@ class XiaoAI:
             cls.echo_gain = float(settings.get("output_gain", 64))
         cleaned = cls.echo.process(frames[:, 0], frames[:, 1]) * cls.echo_gain
         cls._echo_seen = time.monotonic()
+        if np.any(frames[:, 1]):
+            # This packet's echo reaches the output one canceller delay later
+            # and the room keeps ringing a little after that.
+            hangover = int(APP_CONFIG.get("barge_in", {}).get("echo_vad_hangover_ms", 300)) * 16
+            cls.echo_until = GlobalStream.samples + len(frames) + cls.echo.delay + hangover
         reduction = cls.echo.reduction_db()
         HEALTH.update(aec_ref_active=cls.echo.ref_active,
                       aec_reduction_db=None if reduction is None else round(reduction, 1))

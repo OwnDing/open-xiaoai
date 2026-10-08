@@ -3,7 +3,7 @@ import time
 
 from config import APP_CONFIG
 from xiaozhi.event import EventManager
-from xiaozhi.ref import set_vad
+from xiaozhi.ref import get_xiaoai, set_vad
 from xiaozhi.services.audio.stream import MyAudio
 from xiaozhi.services.audio.vad.silero import Silero
 from xiaozhi.services.protocols.typing import AudioConfig
@@ -34,6 +34,11 @@ class _VAD:
         # ends. Normal-length speech keeps min_silence_duration.
         self.short_utterance_duration = config.get("short_utterance_duration", 800)
         self.short_utterance_silence = config.get("short_utterance_silence", 1000)
+        # Right after playback, what is left of 小七's voice after echo
+        # cancellation still scores up to ~0.9 as speech; a caller scores
+        # ~1.0. Frames that may hold that residue need the higher threshold.
+        echo = APP_CONFIG.get("barge_in", {}).get("echo_vad_threshold")
+        self.echo_threshold = self.threshold if echo is None else echo
 
         # 状态变量
         self.paused = True
@@ -152,6 +157,12 @@ class _VAD:
             self.pause()
             EventManager.on_silence()
 
+    def frame_threshold(self, position):
+        """Speech threshold for the frame starting at input sample `position`."""
+        if position is not None and position < getattr(get_xiaoai(), "echo_until", -1):
+            return self.echo_threshold
+        return self.threshold
+
     def required_silence(self):
         """Silence (ms) that ends the current utterance."""
         # on_speech fired after min_speech_duration of speech, so count it too.
@@ -202,6 +213,7 @@ class _VAD:
                 continue
 
             # 读取缓冲区音频数据
+            position = self.stream.position() if hasattr(self.stream, "position") else None
             frames = self.stream.read(
                 self.frame_size, exception_on_overflow=False
             )
@@ -211,7 +223,7 @@ class _VAD:
 
             # 检测是否是语音
             speech_prob = Silero.vad(frames, self.sample_rate) or 0
-            is_speech = speech_prob >= self.threshold
+            is_speech = speech_prob >= self.frame_threshold(position)
             if is_speech:
                 self._handle_speech_frame(frames)
             else:

@@ -89,7 +89,11 @@ APP_CONFIG = {
         "prompt_tone": "/usr/share/common_sound/wakeup.opus",
         # 一口气说“你好小七，明天天气怎么样”时，唤醒词认出时已经过去一小段，
         # 从认出的位置往回多取这么多毫秒接着听，不丢开头。
-        "keyword_tail_ms": 200,
+        "keyword_tail_ms": 100,
+        # 刚放过声音的那一小段（播放中、停播后 echo_vad_hangover_ms 内），消除后剩下的小七的声音
+        # 仍可能被当成说话；这段时间里说话检测用这个更高的阈值（真人说话约 1.0）。
+        "echo_vad_threshold": 0.7,
+        "echo_vad_hangover_ms": 300,
         # 打断时比较“回声消除后剩下的声音”和“消掉的回声”（dB）。设成数字（如 -17）后，
         # 低于它的唤醒当作小七自己的声音忽略；None 只记录在健康日志里。
         "near_end_min_db": None,
