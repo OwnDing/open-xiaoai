@@ -1,25 +1,45 @@
+import threading
 import uuid
 from typing import Any, Callable, ClassVar, Optional
 
 from xiaozhi.ref import get_xiaoai
+
+# Recent input kept for readers that start late (S16 mono at 16 kHz).
+HISTORY_SAMPLES = 3 * 16000
 
 
 class __GlobalStream:
     def __init__(self):
         self.readers = {}
         self.on_output_data = None
+        self._lock = threading.RLock()
+        # Index of the next input sample, counted since the bridge started.
+        self.samples = 0
+        self._history = bytearray()
 
-    def register_reader(self, reader):
-        if reader.id not in self.readers:
-            self.readers[reader.id] = reader
+    def register_reader(self, reader, since=None):
+        """With `since` (a sample index), the reader first gets the recent
+        input from there on, so nothing said in between is lost."""
+        with self._lock:
+            if reader.id not in self.readers:
+                self.readers[reader.id] = reader
+            if since is not None:
+                kept = len(self._history) // 2
+                skip = max(0, kept - (self.samples - since))
+                reader.input(bytes(self._history[skip * 2 :]), end=self.samples)
 
     def unregister_reader(self, reader) -> None:
-        if reader.id in self.readers:
-            del self.readers[reader.id]
+        with self._lock:
+            if reader.id in self.readers:
+                del self.readers[reader.id]
 
     def input(self, data: bytes) -> None:
-        for key in self.readers:
-            self.readers[key].input(data)
+        with self._lock:
+            self.samples += len(data) // 2
+            self._history += data
+            del self._history[: max(0, len(self._history) - HISTORY_SAMPLES * 2)]
+            for key in list(self.readers):
+                self.readers[key].input(data, end=self.samples)
 
     def output(self, frames: bytes) -> None:
         if self.on_output_data:
@@ -50,6 +70,8 @@ class MyStream:
         self._is_active = False
 
         self.input_bytes: list[int] = []
+        # GlobalStream sample index just after the last input byte.
+        self.end_sample = 0
 
         if start:
             self.start_stream()
@@ -60,11 +82,11 @@ class MyStream:
     def is_active(self) -> bool:
         return self._is_active
 
-    def start_stream(self) -> None:
+    def start_stream(self, since=None) -> None:
         if not self._is_active:
             self._is_active = True
             if self._is_input:
-                GlobalStream.register_reader(self)
+                GlobalStream.register_reader(self, since)
 
     def stop_stream(self) -> None:
         if self._is_active:
@@ -79,13 +101,19 @@ class MyStream:
             return
         GlobalStream.output(frames)
 
-    def input(self, data: bytes):
+    def input(self, data: bytes, end=None):
         # 收到麦克风输入音频流
         if not self._is_input or not self._is_active:
             return
 
         if len(data) > 0:
             self.input_bytes.extend(data)
+        if end is not None:
+            self.end_sample = end
+
+    def position(self) -> int:
+        """GlobalStream sample index of the next sample read() returns."""
+        return self.end_sample - len(self.input_bytes) // 2
 
     def read(self, num_frames=None, exception_on_overflow=False) -> bytes:
         if num_frames is None:

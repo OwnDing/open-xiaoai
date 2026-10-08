@@ -2,12 +2,15 @@ import argparse
 import asyncio
 import threading
 import json
+import time
 
 import numpy as np
 import open_xiaoai_server
 
+from config import APP_CONFIG
 from xiaozhi.event import EventManager
 from xiaozhi.ref import get_speaker, set_xiaoai
+from xiaozhi.services.audio.aec import SubbandEchoCanceller
 from xiaozhi.services.audio.stream import GlobalStream
 from xiaozhi.services.audio.health import HEALTH
 from xiaozhi.services.speaker import SpeakerManager
@@ -23,10 +26,28 @@ v1.0.0  by: https://del.wang
 """
 
 
+# The speaker records one microphone plus a loopback of its own playback
+# (see the client's echo_ref); the bridge cancels the echo.
+DEFAULT_ECHO_CAPTURE = {
+    "pcm": "Capture",
+    "channels": 4,
+    "sample_rate": 48000,
+    "mic_channel": 0,
+    "ref_channel": 3,
+    "mic_shift": 14,
+    "ref_shift": 16,
+}
+# Echo-reference frames older than this mean the speaker stopped sending them.
+ECHO_REFERENCE_STALE_S = 2.0
+
+
 class XiaoAI:
     mode = "xiaoai"
     speaker = SpeakerManager()
     async_loop: asyncio.AbstractEventLoop = None
+    echo = None  # SubbandEchoCanceller, created on the first stereo frame
+    echo_gain = 1.0
+    _echo_seen = None
 
     @classmethod
     def setup_mode(cls):
@@ -58,8 +79,35 @@ class XiaoAI:
     @classmethod
     def on_input_packet(cls, packet):
         data, metadata = packet
-        HEALTH.pcm(np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0, json.loads(metadata))
+        metadata = json.loads(metadata)
+        if metadata.get("layout") == "mic_ref":
+            data = cls._cancel_echo(data)
+        HEALTH.pcm(np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0, metadata)
         cls._feed_input(data)
+
+    @classmethod
+    def _cancel_echo(cls, data):
+        """Stereo [mic, playback] S16 in, the microphone without the
+        playback out, as mono S16 at the level the rest expects."""
+        frames = np.frombuffer(data, dtype="<i2").reshape(-1, 2)
+        if cls.echo is None:
+            settings = APP_CONFIG.get("barge_in", {}).get("echo_canceller", {})
+            cls.echo = SubbandEchoCanceller(
+                taps=int(settings.get("taps", 8)),
+                tau_s=float(settings.get("tau_s", 3.0)),
+            )
+            cls.echo_gain = float(settings.get("output_gain", 64))
+        cleaned = cls.echo.process(frames[:, 0], frames[:, 1]) * cls.echo_gain
+        cls._echo_seen = time.monotonic()
+        reduction = cls.echo.reduction_db()
+        HEALTH.update(aec_ref_active=cls.echo.ref_active,
+                      aec_reduction_db=None if reduction is None else round(reduction, 1))
+        return np.clip(np.round(cleaned), -32768, 32767).astype("<i2").tobytes()
+
+    @classmethod
+    def echo_reference_live(cls):
+        seen = cls._echo_seen
+        return seen is not None and time.monotonic() - seen < ECHO_REFERENCE_STALE_S
 
     @classmethod
     def on_health_event(cls, event):
@@ -136,6 +184,12 @@ class XiaoAI:
                     "kws_buffer_samples": len(getattr(stream, "input_bytes", [])) // 2}
         HEALTH.start(probe)
         GlobalStream.on_output_data = cls.on_output_data
+        barge_in = APP_CONFIG.get("barge_in", {})
+        if barge_in.get("echo_reference", False):
+            capture = {**DEFAULT_ECHO_CAPTURE, **barge_in.get("capture", {})}
+            open_xiaoai_server.set_echo_ref(json.dumps(capture))
+            print("🔁 请音箱同时发送播放回采，用于消除回声"
+                  + ("；小七说话时可以喊唤醒词打断" if barge_in.get("enabled") else ""))
         open_xiaoai_server.register_fn("on_input_data", cls.on_input_data)
         open_xiaoai_server.register_fn("on_input_packet", cls.on_input_packet)
         open_xiaoai_server.register_fn("on_health_event", cls.on_health_event)

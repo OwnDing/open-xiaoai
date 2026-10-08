@@ -80,8 +80,11 @@ class _VAD:
         self._reset_state()
         self.stream.stop_stream()
 
-    def resume(self, target: str):
-        """恢复VAD检测"""
+    def resume(self, target: str, since=None):
+        """恢复VAD检测
+
+        since: 从这个输入采样点开始听（打断时接上唤醒词后面已经说出的话）。
+        """
         if not get_env("CLI"):
             return
 
@@ -96,7 +99,10 @@ class _VAD:
         self.paused = False
         self.target = target
         self.voiced_count = 0
-        self.stream.start_stream()
+        if since is None:
+            self.stream.start_stream()
+        else:
+            self.stream.start_stream(since)
 
     def _handle_speech_frame(self, frames):
         """处理语音帧"""

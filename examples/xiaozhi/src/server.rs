@@ -31,9 +31,16 @@ const ANNOUNCE_AFTER: Duration = Duration::from_secs(60);
 /// The speaker connection being served; there is one speaker per bridge.
 static ACTIVE: LazyLock<Mutex<Option<JoinHandle<()>>>> = LazyLock::new(|| Mutex::new(None));
 static LAST_DISCONNECT: LazyLock<StdMutex<Option<Instant>>> = LazyLock::new(|| StdMutex::new(None));
+/// Sent as `echo_ref` with every recording request when set (see
+/// `set_echo_ref`): the speaker then also sends its playback loopback.
+static ECHO_REF: LazyLock<StdMutex<Option<serde_json::Value>>> = LazyLock::new(|| StdMutex::new(None));
+
+pub fn set_echo_ref(config: Option<serde_json::Value>) {
+    *ECHO_REF.lock().unwrap() = config;
+}
 
 async fn audio_watchdog() {
-    let recording_config = json!(AudioConfig {
+    let mut recording_config = json!(AudioConfig {
         pcm: "noop".into(),
         channels: 1,
         bits_per_sample: 16,
@@ -41,6 +48,9 @@ async fn audio_watchdog() {
         period_size: 1440 / 4,
         buffer_size: 1440,
     });
+    if let Some(echo_ref) = ECHO_REF.lock().unwrap().clone() {
+        recording_config["echo_ref"] = echo_ref;
+    }
     // On a lossy link the reply can take seconds; the microphone must not wait
     // for the player (which native_xiaomi output does not even use).
     let start_play = tokio::spawn(async {

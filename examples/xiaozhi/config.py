@@ -79,6 +79,39 @@ APP_CONFIG = {
         "no_reply_timeout": 5,
         "no_reply_prompt": "我没听清，再说一遍？",
     },
+    "barge_in": {
+        # 小七说话时喊唤醒词可以打断她，然后直接说新的问题（需要 echo_reference）。
+        "enabled": True,
+        # 让音箱同时发回它正在播放的声音，桥接据此消除回声。需要本仓库的音箱客户端；
+        # 旧客户端会忽略这个请求，照旧发送单声道录音（此时不能打断）。
+        "echo_reference": True,
+        # 打断后播放的提示音（音箱上的文件，留空则不播放）
+        "prompt_tone": "/usr/share/common_sound/wakeup.opus",
+        # 一口气说“你好小七，明天天气怎么样”时，唤醒词认出时已经过去一小段，
+        # 从认出的位置往回多取这么多毫秒接着听，不丢开头。
+        "keyword_tail_ms": 200,
+        # 打断时比较“回声消除后剩下的声音”和“消掉的回声”（dB）。设成数字（如 -17）后，
+        # 低于它的唤醒当作小七自己的声音忽略；None 只记录在健康日志里。
+        "near_end_min_db": None,
+        # 音箱录音：一个麦克风 + 播放回采声道（OH2P 的 hw:0,3 第 4 声道）
+        "capture": {
+            "pcm": "Capture",
+            "channels": 4,
+            "sample_rate": 48000,
+            "mic_channel": 0,
+            "ref_channel": 3,
+            "mic_shift": 14,
+            "ref_shift": 16,
+        },
+        "echo_canceller": {
+            # 回声尾巴长度（帧，每帧 16 ms）；8 帧在 3 米、音量 75 时也能认出唤醒词
+            "taps": 8,
+            # 回声路径的平均时长（秒）
+            "tau_s": 3.0,
+            # 消除后放大多少倍，回到原来单声道录音的音量
+            "output_gain": 64,
+        },
+    },
     "tts_output": {
         # 可选："sherpa"（服务端音频流）或 "native_xiaomi"（音箱原生音色）
         # Docker 部署可通过 XIAOZHI_TTS_OUTPUT_MODE 环境变量覆盖。

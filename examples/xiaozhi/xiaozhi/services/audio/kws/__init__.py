@@ -6,7 +6,7 @@ import time
 from config import APP_CONFIG
 from xiaozhi.event import EventManager
 from xiaozhi.services.audio.health import HEALTH
-from xiaozhi.ref import get_xiaozhi, set_kws
+from xiaozhi.ref import get_xiaoai, get_xiaozhi, set_kws
 from xiaozhi.services.audio.kws.sherpa import SherpaOnnx
 from xiaozhi.services.audio.stream import MyAudio
 from xiaozhi.services.protocols.typing import AudioConfig, DeviceState
@@ -67,6 +67,9 @@ class _KWS:
         state = get_xiaozhi().device_state
         if self.paused:
             return "paused"
+        if state == DeviceState.SPEAKING and barge_in_ready():
+            # The echo is cancelled, so 小七 can be interrupted by name.
+            return "active"
         return state if state in [DeviceState.LISTENING, DeviceState.SPEAKING] else "active"
 
     def _discard_buffer(self):
@@ -123,7 +126,10 @@ class _KWS:
         HEALTH.kws(len(frames) // 2, mode, time.monotonic()-started, hit=bool(result) and current)
         if result and current:
             print(f"🔥 触发唤醒: {result}")
-            self.on_message(result, revision)
+            # Where the keyword ended (roughly): speech after it is replayed
+            # to the listener when it interrupts 小七.
+            position = self.stream.position() if hasattr(self.stream, "position") else None
+            self.on_message(result, revision, position)
 
     def _detection_loop(self):
         try:
@@ -147,19 +153,30 @@ class _KWS:
             if not frames or self.paused:
                 time.sleep(0.01)
 
-    async def _dispatch_wakeup(self, text, revision):
+    async def _dispatch_wakeup(self, text, revision, position=None):
         with self._control_lock:
             current = revision == self._revision and self._mode() == "active"
-        if current:
-            await EventManager.wakeup(text, "kws")
-        else:
+        if not current:
             HEALTH.emit("kws_stale_hit", revision=revision)
+        elif get_xiaozhi().device_state == DeviceState.SPEAKING:
+            EventManager.barge_in(text, position)
+        else:
+            await EventManager.wakeup(text, "kws")
 
-    def on_message(self, text: str, revision: int):
+    def on_message(self, text: str, revision: int, position=None):
         asyncio.run_coroutine_threadsafe(
-            self._dispatch_wakeup(text, revision),
+            self._dispatch_wakeup(text, revision, position),
             get_xiaozhi().loop,
         )
+
+
+def barge_in_ready():
+    """Barge-in is on and the speaker is sending its echo reference."""
+    if not APP_CONFIG.get("barge_in", {}).get("enabled", False):
+        return False
+    xiaoai = get_xiaoai()
+    live = getattr(xiaoai, "echo_reference_live", None)
+    return bool(live and live())
 
 
 KWS = _KWS()

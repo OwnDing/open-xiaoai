@@ -65,7 +65,7 @@ class KWSLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.model.kws.return_value = "你好小七"
         self.kws._process_frames(self.frame)
         self.model.kws.assert_called_once_with(self.frame)
-        self.kws.on_message.assert_called_once_with("你好小七", self.kws._revision)
+        self.kws.on_message.assert_called_once_with("你好小七", self.kws._revision, 0)
 
     def test_reset_failure_is_logged(self):
         self.kws.pause(); self.kws.resume()

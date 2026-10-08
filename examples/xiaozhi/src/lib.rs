@@ -46,9 +46,26 @@ fn run_shell(py: Python, script: String, timeout_millis: f64) -> PyResult<Bound<
     })
 }
 
+/// JSON of the speaker's echo-reference capture, or "" for mono only.
+/// Takes effect with the next recording request (every few seconds).
+#[pyfunction]
+fn set_echo_ref(config: String) -> PyResult<()> {
+    let value = if config.trim().is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::from_str(&config)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+        )
+    };
+    server::set_echo_ref(value);
+    Ok(())
+}
+
 #[pymodule]
 fn open_xiaoai_server(_py: Python, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(start_server, &m)?)?;
+    m.add_function(wrap_pyfunction!(set_echo_ref, &m)?)?;
     m.add_function(wrap_pyfunction!(on_output_data, &m)?)?;
     m.add_function(wrap_pyfunction!(run_shell, &m)?)?;
     crate::python::init_module(&m)?;

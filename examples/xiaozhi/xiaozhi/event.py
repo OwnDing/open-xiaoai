@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import shlex
 import threading
 
 from config import APP_CONFIG
@@ -8,6 +9,7 @@ from xiaozhi.ref import (
     get_kws,
     get_speaker,
     get_vad,
+    get_xiaoai,
     get_xiaozhi,
     set_speech_frames,
 )
@@ -20,10 +22,15 @@ def get_vad_setting(key, default):
     return APP_CONFIG.get("vad", {}).get(key, default)
 
 
+def get_barge_in_setting(key, default):
+    return APP_CONFIG.get("barge_in", {}).get(key, default)
+
+
 class Step:
     idle = "idle"
     on_interrupt = "on_interrupt"
     on_wakeup = "on_wakeup"
+    on_barge_in = "on_barge_in"
     on_tts_start = "on_tts_start"
     on_tts_end = "on_tts_end"
     on_speech = "on_speech"
@@ -39,6 +46,9 @@ class __EventManager:
         self.next_step_loop = None
         self.session_future = None
         self.state_lock = threading.Lock()
+        # Input sample to start listening from after a barge-in.
+        self.listen_from = None
+        self._background = set()
 
     @staticmethod
     def _resolve_future(future, result):
@@ -141,11 +151,30 @@ class __EventManager:
         """用户唤醒（你好小智）"""
         self._begin_session(Step.on_wakeup)
 
+    def barge_in(self, text, position=None):
+        """小七说话时用户喊了唤醒词：马上停下，接着听
+
+        position: 唤醒词大约在哪个输入采样点结束；之后已经说出的话会补给 VAD。
+        """
+        canceller = getattr(get_xiaoai(), "echo", None)
+        ratio = canceller.near_end_ratio_db() if canceller else None
+        min_db = get_barge_in_setting("near_end_min_db", None)
+        rejected = min_db is not None and ratio is not None and ratio < min_db
+        HEALTH.emit("barge_in", keyword=text, near_end_db=None if ratio is None else round(ratio, 1),
+                    rejected=rejected)
+        if rejected:
+            print(f"🙉 忽略疑似小七自己的声音: {text} ({ratio:.1f} dB)")
+            return
+        tail = int(get_barge_in_setting("keyword_tail_ms", 200)) * 16
+        self.listen_from = None if position is None else max(0, position - tail)
+        print(f"✋ 打断小七: {text}")
+        self._begin_session(Step.on_barge_in)
+
     def on_tts_end(self, session_id):
         """TTS结束"""
         self._begin_session(
             Step.on_tts_end,
-            ignored_steps=(Step.idle, Step.on_interrupt, Step.on_tts_end),
+            ignored_steps=(Step.idle, Step.on_interrupt, Step.on_tts_end, Step.on_barge_in),
         )
 
     def on_tts_start(self, session_id):
@@ -206,6 +235,11 @@ class __EventManager:
 
         # 先取消之前的 VAD 检测和音频输入输出流
         xiaozhi.set_device_state(DeviceState.IDLE)
+        listen_from = None
+        if trigger_step == Step.on_barge_in:
+            listen_from, self.listen_from = self.listen_from, None
+            # Whatever the server still sends for the interrupted reply is dropped.
+            xiaozhi.ignore_tts_until_stt()
         # TTS 正常结束时不要反向取消刚完成的任务。所有状态切换均在
         # XiaoZhi.loop 上执行，避免跨事件循环等待 Task。
         if trigger_step != Step.on_tts_end:
@@ -218,6 +252,11 @@ class __EventManager:
         if trigger_step == Step.on_interrupt:
             return
 
+        if trigger_step == Step.on_barge_in:
+            # A short tone instead of the wake greeting; listen at once. The
+            # tone's echo is cancelled like 小七's voice.
+            self._play_tone(speaker, get_barge_in_setting("prompt_tone", ""))
+
         # 只留一小段时间避开音箱自己的余音，然后马上开始听。
         # 以前要先等到 0.5s 安静才开始听，用户一接话就会被丢掉。
         if trigger_step == Step.on_tts_end:
@@ -227,7 +266,10 @@ class __EventManager:
 
         # 检查是否有人说话
         print(f"🎙️ 等待用户说话: session={session_id} trigger={trigger_step}")
-        vad.resume("speech")
+        if listen_from is None:
+            vad.resume("speech")
+        else:
+            vad.resume("speech", since=listen_from)
         step, speech_buffer = await self.wait_next_step(
             session_id,
             timeout=APP_CONFIG["wakeup"]["timeout"],
@@ -267,6 +309,15 @@ class __EventManager:
             await speaker.play(text=prompt)
         if self._is_current_session(session_id):
             self._begin_session(Step.on_tts_end)
+
+    def _play_tone(self, speaker, path):
+        if not path:
+            return
+        task = asyncio.ensure_future(
+            speaker.run_shell(f"miplayer -f {shlex.quote(path)} >/dev/null 2>&1", timeout=3000)
+        )
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     async def _end_session(self, session_id, xiaozhi, speaker):
         with self.state_lock:
