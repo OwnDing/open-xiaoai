@@ -1,6 +1,6 @@
 services:
   open-xiaoai-xiaozhi:
-    image: local/open-xiaoai-xiaozhi:link-resilience
+    image: local/open-xiaoai-xiaozhi:barge-in
     container_name: open-xiaoai-xiaozhi
     restart: unless-stopped
     environment:
@@ -21,6 +21,8 @@ services:
       - ../../examples/xiaozhi/xiaozhi/services/audio/kws/keywords.py:/app/xiaozhi/services/audio/kws/keywords.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/audio/kws/sherpa.py:/app/xiaozhi/services/audio/kws/sherpa.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/audio/vad/__init__.py:/app/xiaozhi/services/audio/vad/__init__.py:ro
+      - ../../examples/xiaozhi/xiaozhi/services/audio/stream.py:/app/xiaozhi/services/audio/stream.py:ro
+      - ../../examples/xiaozhi/xiaozhi/services/audio/aec.py:/app/xiaozhi/services/audio/aec.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/protocols/websocket_protocol.py:/app/xiaozhi/services/protocols/websocket_protocol.py:ro
 
 volumes:

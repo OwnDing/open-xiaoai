@@ -28,6 +28,15 @@ class __GlobalStream:
                 skip = max(0, kept - (self.samples - since))
                 reader.input(bytes(self._history[skip * 2 :]), end=self.samples)
 
+    def recent(self, start, end) -> bytes:
+        """Kept input between two sample indices (clipped to what is kept)."""
+        with self._lock:
+            first = self.samples - len(self._history) // 2
+            a, b = max(start, first), min(end, self.samples)
+            if b <= a:
+                return b""
+            return bytes(self._history[(a - first) * 2 : (b - first) * 2])
+
     def unregister_reader(self, reader) -> None:
         with self._lock:
             if reader.id in self.readers:

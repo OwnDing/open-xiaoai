@@ -114,6 +114,12 @@ class PrerollStreamTests(unittest.TestCase):
         np.testing.assert_array_equal(got, np.arange(40, 160))
         self.assertEqual(vad.position(), 160)
 
+    def test_recent_returns_kept_input_between_positions(self):
+        GlobalStream.input(np.arange(100, dtype="<i2").tobytes())
+        np.testing.assert_array_equal(np.frombuffer(GlobalStream.recent(10, 20), dtype="<i2"), np.arange(10, 20))
+        self.assertEqual(GlobalStream.recent(90, 200), np.arange(90, 100, dtype="<i2").tobytes())
+        self.assertEqual(GlobalStream.recent(50, 40), b"")
+
     def test_too_old_position_starts_at_the_oldest_kept_sample(self):
         from xiaozhi.services.audio import stream as stream_module
 
@@ -197,6 +203,64 @@ class BargeInSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, [])
         speaker.run_shell.assert_not_awaited()
         health.emit.assert_any_call("barge_in", keyword="你好小七", near_end_db=-22.0, rejected=True)
+
+    async def run_to_speech(self, speech_start, speech):
+        """Barge-in at sample 48000 (listening from 46400); the VAD hears speech
+        starting at `speech_start` and has read up to the end of `speech`."""
+        manager = make_event_manager()
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        end = speech_start + len(speech) // 2
+
+        class FakeVAD:
+            read_position = None
+
+            def resume(self, target, since=None):
+                if target == "speech":
+                    self.read_position = end
+                    loop.call_soon(manager.on_speech, speech)
+
+        class FakeInput:
+            def start_stream(self, since=None):
+                self.since = since
+                started.set()
+
+        class FakeProtocol:
+            async def send_abort_speaking(self, reason): pass
+            async def send_start_listening(self, mode): pass
+
+        xiaozhi = SimpleNamespace(loop=loop, protocol=FakeProtocol(), set_device_state=lambda s: None,
+                                  ignore_tts_until_stt=lambda: None, abort_tts_output=AsyncMock())
+        codec = SimpleNamespace(input_stream=FakeInput())
+        settings = {"prompt_tone": "", "keyword_tail_ms": 100, "speech_lookback_ms": 350}
+        with (
+            patch.dict(event_module.APP_CONFIG, {"barge_in": settings}),
+            patch("xiaozhi.event.get_env", return_value="1"),
+            patch("xiaozhi.event.get_xiaozhi", return_value=xiaozhi),
+            patch("xiaozhi.event.get_xiaoai", return_value=None),
+            patch("xiaozhi.event.get_vad", return_value=FakeVAD()),
+            patch("xiaozhi.event.get_audio_codec", return_value=codec),
+            patch("xiaozhi.event.get_speaker", return_value=None),
+            patch("xiaozhi.event.HEALTH"),
+            patch("xiaozhi.event.GlobalStream") as stream,
+            patch("xiaozhi.event.set_speech_frames") as set_frames,
+        ):
+            stream.recent.side_effect = lambda a, b: b"R" * ((b - a) * 2)
+            manager.barge_in("你好小七", position=48000)
+            await asyncio.wait_for(started.wait(), timeout=1)
+        return set_frames.call_args.args[0], codec.input_stream.since
+
+    async def test_one_breath_request_gets_the_audio_before_listening_and_no_gap(self):
+        speech = b"S" * 2000  # buffer starts right where listening began
+        sent, since = await self.run_to_speech(46400, speech)
+        self.assertEqual(sent, b"R" * ((46400 - (48000 - 350 * 16)) * 2) + speech)
+        self.assertEqual(since, 46400 + 1000)  # continues where the VAD stopped reading
+
+    async def test_request_after_a_pause_is_sent_as_heard(self):
+        speech = b"S" * 2000  # the VAD buffer already holds the pause before it
+        sent, since = await self.run_to_speech(52000, speech)
+        self.assertEqual(sent, speech)
+        self.assertEqual(since, 53000)
 
     async def test_late_tts_end_does_not_restart_the_barge_in_turn(self):
         manager = make_event_manager()

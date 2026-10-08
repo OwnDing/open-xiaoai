@@ -51,6 +51,9 @@ class _VAD:
         self.audio = None
         self.stream = None
 
+        # Input sample just after the last frame read (None without positions).
+        self.read_position = None
+
         # 暂存的语音片段
         self.silence_frames = []  # 静音片段
         self.speech_frames = []  # 语音片段
@@ -220,6 +223,8 @@ class _VAD:
             if len(frames) != self.frame_size * 2:
                 time.sleep(0.01)
                 continue
+
+            self.read_position = None if position is None else position + len(frames) // 2
 
             # 检测是否是语音
             speech_prob = Silero.vad(frames, self.sample_rate) or 0

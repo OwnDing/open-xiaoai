@@ -13,6 +13,7 @@ from xiaozhi.ref import (
     get_xiaozhi,
     set_speech_frames,
 )
+from xiaozhi.services.audio.stream import GlobalStream
 from xiaozhi.services.protocols.typing import AbortReason, DeviceState, ListeningMode
 from xiaozhi.services.audio.health import HEALTH
 from xiaozhi.utils.base import get_env
@@ -46,7 +47,9 @@ class __EventManager:
         self.next_step_loop = None
         self.session_future = None
         self.state_lock = threading.Lock()
-        # Input sample to start listening from after a barge-in.
+        # After a barge-in: where the keyword (roughly) ended and where
+        # listening starts.
+        self.keyword_at = None
         self.listen_from = None
         self._background = set()
 
@@ -166,6 +169,7 @@ class __EventManager:
             print(f"🙉 忽略疑似小七自己的声音: {text} ({ratio:.1f} dB)")
             return
         tail = int(get_barge_in_setting("keyword_tail_ms", 100)) * 16
+        self.keyword_at = position
         self.listen_from = None if position is None else max(0, position - tail)
         print(f"✋ 打断小七: {text}")
         self._begin_session(Step.on_barge_in)
@@ -235,9 +239,10 @@ class __EventManager:
 
         # 先取消之前的 VAD 检测和音频输入输出流
         xiaozhi.set_device_state(DeviceState.IDLE)
-        listen_from = None
+        listen_from = keyword_at = None
         if trigger_step == Step.on_barge_in:
             listen_from, self.listen_from = self.listen_from, None
+            keyword_at, self.keyword_at = self.keyword_at, None
             # Whatever the server still sends for the interrupted reply is dropped.
             xiaozhi.ignore_tts_until_stt()
         # TTS 正常结束时不要反向取消刚完成的任务。所有状态切换均在
@@ -281,8 +286,17 @@ class __EventManager:
             return
 
         # 开始说话
+        speech_end = getattr(vad, "read_position", None)
+        if listen_from is not None and keyword_at is not None and speech_end is not None:
+            speech_buffer = self._with_lookback(speech_buffer, speech_end, listen_from, keyword_at)
         set_speech_frames(speech_buffer)
-        codec.input_stream.start_stream()  # 开启录音
+        if speech_end is None:
+            codec.input_stream.start_stream()  # 开启录音
+        else:
+            # After a barge-in the VAD is still catching up with the replayed
+            # audio when it hears speech; continuing from "now" lost 0.2-0.35 s
+            # ("宁波市中心" became "播中心"). Continue where it stopped reading.
+            codec.input_stream.start_stream(since=speech_end)
         await xiaozhi.protocol.send_start_listening(ListeningMode.MANUAL)
         xiaozhi.set_device_state(DeviceState.LISTENING)
 
@@ -309,6 +323,21 @@ class __EventManager:
             await speaker.play(text=prompt)
         if self._is_current_session(session_id):
             self._begin_session(Step.on_tts_end)
+
+    @staticmethod
+    def _with_lookback(speech, speech_end, listen_from, keyword_at):
+        """Said in one breath ("你好小七宁波市中心在哪里"), the request starts
+        as the keyword ends, but the keyword is recognized up to ~0.4 s later.
+        The VAD starts just before the hit so the end of "七" cannot pass for
+        speech; the recognizer gets audio from further back. SenseVoice ignored
+        that leading tail in every recorded case. Only when the VAD buffer
+        reaches back to where listening began: otherwise it already holds the
+        pause before the request and nothing was cut."""
+        start = speech_end - len(speech) // 2
+        if start > listen_from:
+            return speech
+        lookback = int(get_barge_in_setting("speech_lookback_ms", 350)) * 16
+        return GlobalStream.recent(keyword_at - lookback, start) + bytes(speech)
 
     def _play_tone(self, speaker, path):
         if not path:
