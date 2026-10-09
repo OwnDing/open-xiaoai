@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AudioConfig {
     pub pcm: String,
     pub channels: u16,

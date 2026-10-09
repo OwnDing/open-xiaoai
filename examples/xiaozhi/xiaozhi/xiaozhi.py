@@ -5,7 +5,7 @@ import threading
 import time
 
 from config import APP_CONFIG
-from xiaozhi.event import EventManager
+from xiaozhi.event import EventManager, exit_word
 from xiaozhi.ref import set_xiaozhi
 from xiaozhi.services.audio.kws import KWS
 from xiaozhi.services.audio.vad import VAD
@@ -58,6 +58,9 @@ class XiaoZhi:
             NativeTTSSettings.from_config(native_config),
         )
         self._native_finish_task = None
+        # After a barge-in the server may still be sending the interrupted
+        # reply; drop its TTS until it recognizes what the user says next.
+        self._tts_gate = False
         print(f"🔈 TTS 输出模式: {self.tts_output_mode}")
 
         # 状态变量
@@ -235,7 +238,7 @@ class XiaoZhi:
 
     def _on_incoming_audio(self, data):
         """接收音频数据回调"""
-        if self.tts_output_mode == "native_xiaomi":
+        if self.tts_output_mode == "native_xiaomi" or self._tts_gate:
             return
         if self.device_state == DeviceState.SPEAKING:
             self.audio_codec.write_audio(data)
@@ -263,9 +266,16 @@ class XiaoZhi:
         except Exception as error:
             print(f"❌ 处理服务端消息失败: {error}")
 
+    def ignore_tts_until_stt(self):
+        self._tts_gate = True
+
     async def _handle_tts_message(self, data):
         """处理TTS消息"""
         state = data.get("state", "")
+        if self._tts_gate:
+            if state in ("start", "sentence_start", "stop"):
+                print(f"🔇 丢弃被打断回答的播报: {state} {data.get('text', '')}")
+            return
         if state == "start":
             if self.tts_output_mode == "native_xiaomi":
                 await self.native_tts.start(data.get("session_id"))
@@ -344,7 +354,13 @@ class XiaoZhi:
         text = data.get("text", "")
         if text:
             print(f"💬 我说：{text}")
-            EventManager.on_stt()
+            if exit_word(text):
+                # The server answers "拜拜" too; that answer is not played.
+                self._tts_gate = True
+                EventManager.on_exit_words(text)
+            else:
+                self._tts_gate = False
+                EventManager.on_stt()
             self.schedule(lambda: self.set_chat_message("user", text))
 
     def _handle_llm_message(self, data):

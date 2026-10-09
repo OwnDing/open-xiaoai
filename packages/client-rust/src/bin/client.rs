@@ -1,4 +1,5 @@
 use open_xiaoai::services::audio::config::AudioConfig;
+use open_xiaoai::services::audio::echo_ref::EchoRefConfig;
 use open_xiaoai::services::monitor::kws::KwsMonitor;
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -174,17 +175,25 @@ async fn stop_play(_: Request) -> Result<Response, AppError> {
 }
 
 async fn start_recording(request: Request) -> Result<Response, AppError> {
+    // `echo_ref` rides next to the AudioConfig fields, so older servers and
+    // clients that do not know it keep working with plain mono capture.
+    let echo_ref = request
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("echo_ref").cloned())
+        .and_then(|value| serde_json::from_value::<EchoRefConfig>(value).ok());
     let config = request
         .payload
         .and_then(|payload| serde_json::from_value::<AudioConfig>(payload).ok());
     AudioRecorder::instance()
-        .start_recording(
+        .start_recording_with(
             |bytes, meta| async {
                 MessageManager::instance()
                     .send_stream_realtime("record", bytes, Some(meta))
                     .await
             },
             config,
+            echo_ref,
         )
         .await?;
     Ok(Response::success())
