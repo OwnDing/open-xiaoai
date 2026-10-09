@@ -87,6 +87,7 @@ APP_CONFIG = {
         "enabled": True,
         # 让音箱同时发回它正在播放的声音，桥接据此消除回声。需要本仓库的音箱客户端；
         # 旧客户端会忽略这个请求，照旧发送单声道录音（此时不能打断）。
+        # 只在 OH2P 上验证过；LX06 未测试，请先设为 False。
         "echo_reference": True,
         # 打断后播放的提示音（音箱上的文件，留空则不播放）
         "prompt_tone": "/usr/share/common_sound/wakeup.opus",

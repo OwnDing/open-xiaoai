@@ -197,7 +197,7 @@
 **小爱音箱**
 
 1. 刷机更新小爱音箱补丁固件，开启并 SSH 连接到小爱音箱 👉 [教程](docs/flash.md) · [视频：用 AI 帮你刷机](https://www.bilibili.com/video/BV1Lph86ZEfd)
-2. 在小爱音箱上安装 Client 端补丁程序，使用本仓库 [Releases](https://github.com/OwnDing/open-xiaoai/releases) 里 `client-` 开头的版本 👉 [教程](packages/client-rust/README.md)。中途打断需要比 `client-2026.10.07` 更新的客户端，新版发布前可以按教程自己编译。
+2. 在小爱音箱上安装 Client 端补丁程序，使用本仓库 [Releases](https://github.com/OwnDing/open-xiaoai/releases) 里 `client-` 开头的版本 👉 [教程](packages/client-rust/README.md)。中途打断需要 `client-2026.10.09` 或更新的版本。
 3. 部署小爱桥接和小智服务端 👉 [小爱音箱接入小智 AI](examples/xiaozhi/README.md) · [TTS 输出模式](deploy/sherpa-tts/README.md)
 4. 部署 Home Assistant 并接入米家、海尔等设备，再部署 Hermes。定时任务、场景与联动、主动播报随 Hermes 配置一起安装，装好就能用语音教 👉 [Home Assistant](deploy/homeassistant/README.md) · [Hermes 部署](deploy/hermes/README.md)
 
