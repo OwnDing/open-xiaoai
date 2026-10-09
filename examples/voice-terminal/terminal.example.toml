@@ -62,6 +62,9 @@ reply_timeout_s = 90
 wake_prompt = "prompts/wake.mp3"
 no_reply_prompt = "prompts/no_reply.mp3"
 goodbye_prompt = "prompts/goodbye.mp3"
+# Saying only one of these (with 好的/谢谢 or the wake word allowed) ends the
+# conversation at once. Not "晚安": it starts the sleep scene. [] disables.
+exit_words = ["拜拜", "再见", "退出", "退下", "没事了", "不用了", "结束对话", "bye", "goodbye"]
 
 [control]
 host = "127.0.0.1"

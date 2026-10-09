@@ -11,6 +11,7 @@ from voice_terminal import control
 from voice_terminal.codec import UPLINK_FRAME, OpusDecoder, OpusEncoder
 from voice_terminal.audio import Microphone
 from voice_terminal.config import VadConfig, WakeConfig, load_config
+from voice_terminal.exit_words import DEFAULT_EXIT_WORDS, match_exit_words
 from voice_terminal.frontend import Frontend
 from voice_terminal.kws import WakeWordDetector
 from voice_terminal.terminal import FrameRouter, Mode
@@ -367,3 +368,30 @@ def test_microphone_measures_exact_silence():
     assert mic.silent_s < 1 and mic.heard_sound
     mic.last_callback -= 10  # stalled: no callbacks is not silence
     assert mic.stalled and mic.silent_s == 0.0
+
+
+def exits(text):
+    return match_exit_words(text, DEFAULT_EXIT_WORDS, ["你好小七"])
+
+
+@pytest.mark.parametrize("text", ["拜拜", "再见！", "退下吧", "没事了", "不用了，谢谢", "好的，谢谢，再见",
+                                  "嗯，拜拜啦", "Bye bye.", "没事了，拜拜", "你好小七，拜拜", "小七再见",
+                                  "你好小青，拜拜", "亲拜拜"])
+def test_exit_words_end_the_conversation(text):
+    assert exits(text)
+
+
+@pytest.mark.parametrize("text", ["关灯，拜拜", "用英语怎么说再见", "跟奶奶说拜拜", "晚安", "我要出门了拜拜",
+                                  "你好小七", "谢谢", "", "不用了，帮我把灯关掉"])
+def test_requests_are_not_exit_words(text):
+    assert exits(text) is None
+
+
+def test_exit_words_come_from_the_config(tmp_path):
+    assert match_exit_words("拜拜", []) is None
+    assert match_exit_words("先这样吧", ["先这样"]) == "先这样"
+    path = tmp_path / "t.toml"
+    path.write_text('[terminal]\ndevice_id = "x"\n', encoding="utf-8")
+    assert load_config(path).session.exit_words == DEFAULT_EXIT_WORDS
+    path.write_text('[terminal]\ndevice_id = "x"\n[session]\nexit_words = []\n', encoding="utf-8")
+    assert load_config(path).session.exit_words == []

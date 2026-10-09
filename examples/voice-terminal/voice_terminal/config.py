@@ -5,6 +5,8 @@ import uuid
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
+from .exit_words import DEFAULT_EXIT_WORDS
+
 
 @dataclass
 class ServerConfig:
@@ -79,6 +81,10 @@ class SessionConfig:
     wake_prompt: str = ""
     no_reply_prompt: str = ""
     goodbye_prompt: str = ""
+    # Saying only one of these (optionally with 好的/谢谢 or the wake word, as in
+    # "你好小七，拜拜") ends the conversation at once instead of after the idle
+    # timeout. Not words that start a scene ("晚安"): they would only end it. [] disables.
+    exit_words: list[str] = field(default_factory=lambda: list(DEFAULT_EXIT_WORDS))
 
 
 @dataclass

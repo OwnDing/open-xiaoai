@@ -160,6 +160,33 @@ def test_reconnects_and_drops_conversation(config):
     asyncio.run(scenario())
 
 
+def test_exit_word_ends_the_conversation_and_drops_the_answer(config):
+    async def scenario():
+        terminal, speaker = make_terminal(config)
+        config.session.idle_timeout_s = 5  # standby must come from the exit word, not the timeout
+        task, conn = await start(terminal)
+        terminal._uplink.put_nowait(Event("wake", "你好小七"))
+        await wait_for(lambda: terminal.state == State.AWAKE)
+        terminal._uplink.put_nowait(Event("speech_start", []))
+        terminal._uplink.put_nowait(Event("speech_end"))
+        await wait_for(lambda: terminal.state == State.THINKING)
+
+        terminal._on_json({"type": "stt", "text": "好的，拜拜"})
+        answer(terminal, "拜拜，晚安。")  # the server's answer to it: not played
+        await wait_for(lambda: terminal.state == State.STANDBY, timeout=1.0)
+        assert ("abort",) in conn.sent
+        assert len(speaker.played) == 2  # wake prompt + goodbye
+        assert speaker.fed == 0 and terminal.stats["turns"] == 0
+        assert terminal.router.mode == Mode.WAKE
+
+        answer(terminal, "提醒：该关窗了。")  # after that answer's stop, server speech plays again
+        await wait_for(lambda: terminal.stats["turns"] == 1)
+        assert speaker.fed > 0
+        await stop(terminal, task)
+
+    asyncio.run(scenario())
+
+
 class SilentMic(FakeMic):
     def __init__(self, silent_s, heard_sound):
         self.silent_s, self.heard_sound = silent_s, heard_sound

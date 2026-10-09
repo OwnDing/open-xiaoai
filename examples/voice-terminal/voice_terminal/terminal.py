@@ -13,6 +13,7 @@ import numpy as np
 from .audio import read_audio, refresh_devices, trim_silence
 from .codec import OpusDecoder, OpusEncoder
 from .config import TerminalConfig
+from .exit_words import match_exit_words
 from .protocol import XiaozhiConnection
 from .health import HealthLog
 
@@ -28,6 +29,8 @@ AUDIO_CHECK_SECONDS = 1.0
 # While the mic stays silent after a reopen, recover and reopen again this often.
 SILENT_RETRY_SECONDS = 300.0
 RECOVER_TIMEOUT_SECONDS = 60.0
+# After an exit word, drop the server's answer to it (until its tts stop) at most this long.
+EXIT_DROP_SECONDS = 30.0
 
 
 class Mode:
@@ -181,6 +184,7 @@ class Terminal:
         self._events: asyncio.Queue = asyncio.Queue()
         self._dialog: asyncio.Task | None = None
         self._accept_audio = False
+        self._drop_reply_until = 0.0  # the conversation was ended by an exit word
         self._audio_ok = False
         self._silent_attempts = 0  # reopens since the mic last had sound
         self._silent_retry_at = 0.0
@@ -424,9 +428,20 @@ class Terminal:
             text = data.get("text", "")
             log.info("user: %s", text)
             self.stats["last_stt"] = text
-            self._events.put_nowait(Event("stt", text))
+            word = None
+            if self._dialog is not None:
+                word = match_exit_words(text, self.config.session.exit_words, self.config.wake.keywords)
+            if word:
+                # The server answers it anyway, right after this message: don't play that.
+                self._drop_reply_until = time.monotonic() + EXIT_DROP_SECONDS
+            self._events.put_nowait(Event("exit" if word else "stt", text))
         elif kind == "tts":
             state = data.get("state")
+            if time.monotonic() < self._drop_reply_until:
+                if state == "stop":
+                    self._drop_reply_until = 0.0
+                log.debug("dropped tts %s after an exit word: %s", state, data.get("text", ""))
+                return
             if state == "start":
                 self._decoder.reset()
                 self._accept_audio = True
@@ -517,6 +532,7 @@ class Terminal:
             if trigger != "server":
                 self._drain_events()
                 self._accept_audio = False
+                self._drop_reply_until = 0.0
                 self.speaker.flush()
             if trigger in ("wake", "manual"):
                 await self._play_prompt("wake")
@@ -555,7 +571,19 @@ class Terminal:
                     break
                 self._turn = {"speech_end": time.monotonic()}
                 self.state = State.THINKING
-                if await self._await_reply() == "no_reply":
+                result = await self._await_reply()
+                if result == "exit":
+                    log.info("exit word; standby")
+                    self._accept_audio = False
+                    self.speaker.flush()
+                    if self.conn is not None:
+                        try:
+                            await self.conn.abort()
+                        except ConnectionError:
+                            pass  # the server closes the connection on 退出 itself
+                    await self._play_prompt("goodbye")
+                    break
+                if result == "no_reply":
                     await self._play_prompt("no_reply")
         finally:
             self._accept_audio = False
@@ -567,10 +595,12 @@ class Terminal:
     async def _await_reply(self, started=False) -> str:
         session = self.config.session
         if not started:
-            event = await self._wait({"stt", "tts_start"}, session.no_reply_timeout_s)
+            event = await self._wait({"stt", "tts_start", "exit"}, session.no_reply_timeout_s)
             if event is None:
                 log.info("no recognition result")
                 return "no_reply"
+            if event.kind == "exit":
+                return "exit"
             if event.kind == "stt":
                 self._turn["stt"] = event.at
                 if await self._wait({"tts_start"}, session.reply_timeout_s) is None:
