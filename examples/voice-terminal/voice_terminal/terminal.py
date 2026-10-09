@@ -2,6 +2,7 @@
 
 import asyncio
 import collections
+import locale
 import logging
 import threading
 import time
@@ -23,6 +24,10 @@ PROMPT_RATE = 48000
 # terminal should be back within seconds.
 RECONNECT_MAX_DELAY = 10.0
 AUDIO_RETRY_SECONDS = 5.0
+AUDIO_CHECK_SECONDS = 1.0
+# While the mic stays silent after a reopen, recover and reopen again this often.
+SILENT_RETRY_SECONDS = 300.0
+RECOVER_TIMEOUT_SECONDS = 60.0
 
 
 class Mode:
@@ -177,6 +182,8 @@ class Terminal:
         self._dialog: asyncio.Task | None = None
         self._accept_audio = False
         self._audio_ok = False
+        self._silent_attempts = 0  # reopens since the mic last had sound
+        self._silent_retry_at = 0.0
         self._prompts = self._load_prompts()
         self.stats = {"turns": 0, "last_stt": "", "last_reply": "", "last_turn": {}, "reconnects": 0}
         self._turn = {}
@@ -226,7 +233,9 @@ class Terminal:
         self.health.start(self._health_probe, self._health_observer)
         self.health.emit("wake_config", enabled=self.router._wake is not None,
                          keywords_score=self.config.wake.score,
-                         keywords_threshold=self.config.wake.threshold)
+                         keywords_threshold=self.config.wake.threshold,
+                         max_active_paths=self.config.wake.max_active_paths,
+                         stream_offsets_ms=self.config.wake.stream_offsets_ms)
         self._start_audio()
         tasks = [
             asyncio.create_task(self._uplink_loop(), name="uplink"),
@@ -276,14 +285,20 @@ class Terminal:
 
     async def _audio_health_loop(self):
         while True:
-            await asyncio.sleep(AUDIO_RETRY_SECONDS if not self._audio_ok else 1.0)
-            if self._audio_ok and not (self.mic is not None and self.mic.stalled):
-                continue
+            await asyncio.sleep(AUDIO_RETRY_SECONDS if not self._audio_ok else AUDIO_CHECK_SECONDS)
+            recover = False
             if self._audio_ok:
-                self.health.emit("capture_stalled", **self._health_probe())
-                log.warning("microphone stalled; reopening audio devices")
+                if self.mic is not None and self.mic.stalled:
+                    self.health.emit("capture_stalled", **self._health_probe())
+                    log.warning("microphone stalled; reopening audio devices")
+                else:
+                    recover = self._check_silence()
+                    if recover is None:
+                        continue
                 await self.stop_dialog(notify_server=True)
             self._stop_audio()
+            if recover:
+                await self._run_recover_command()
             try:
                 refresh_devices()
             except Exception:
@@ -292,6 +307,51 @@ class Terminal:
                 log.info("audio devices reopened")
                 if self._dialog is None:
                     self.router.set_mode(Mode.WAKE)
+
+    def _check_silence(self):
+        """None: the mic is fine. False: reopen it. True: run the recovery command, then reopen."""
+        mic, audio = self.mic, self.config.audio
+        if mic is None:
+            return None
+        if self._silent_attempts and getattr(mic, "heard_sound", True):
+            log.info("microphone has sound again")
+            self.health.emit("capture_sound_back", attempts=self._silent_attempts)
+            self._silent_attempts, self._silent_retry_at = 0, 0.0
+        silent = getattr(mic, "silent_s", 0.0)
+        if not audio.silent_reopen_s or silent < audio.silent_reopen_s or time.monotonic() < self._silent_retry_at:
+            return None
+        self._silent_attempts += 1
+        self.health.emit("capture_silent", silent_s=round(silent, 1), attempt=self._silent_attempts, **self._health_probe())
+        log.warning("microphone sent only silence for %.0f s; reopening audio devices (attempt %d)",
+                    silent, self._silent_attempts)
+        if self._silent_attempts == 1:
+            return False
+        self._silent_retry_at = time.monotonic() + SILENT_RETRY_SECONDS
+        return bool(audio.silent_recover_command)
+
+    async def _run_recover_command(self):
+        command = self.config.audio.silent_recover_command
+        log.warning("still silent; running silent_recover_command: %s", command)
+        started = time.monotonic()
+        returncode, output = None, ""
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command, cwd=self.config.base_dir,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), RECOVER_TIMEOUT_SECONDS)
+                output = out.decode(locale.getencoding(), errors="replace").strip()
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                output = f"killed after {RECOVER_TIMEOUT_SECONDS:.0f} s"
+            returncode = proc.returncode
+        except Exception as exc:
+            output = f"{type(exc).__name__}: {exc}"
+        self.health.emit("silent_recover", returncode=returncode, seconds=round(time.monotonic() - started, 1))
+        log.log(logging.INFO if returncode == 0 else logging.WARNING,
+                "silent_recover_command exited %s: %s", returncode, output[-500:])
 
     async def _connection_loop(self):
         delay = 1.0
@@ -544,6 +604,7 @@ class Terminal:
             "mode": self.router.mode,
             "connected": self.conn is not None and self.conn.is_open,
             "audio_ok": self._audio_ok,
+            "mic_silent_s": round(getattr(self.mic, "silent_s", 0.0), 1),
             "audio_health": self.health.peek(),
             "mic": getattr(self.mic, "name", ""),
             "speaker": self.speaker.name,

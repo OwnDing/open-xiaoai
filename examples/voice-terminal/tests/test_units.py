@@ -1,13 +1,18 @@
 import asyncio
 import json
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from voice_terminal import control
 from voice_terminal.codec import UPLINK_FRAME, OpusDecoder, OpusEncoder
-from voice_terminal.config import VadConfig, load_config
+from voice_terminal.audio import Microphone
+from voice_terminal.config import VadConfig, WakeConfig, load_config
+from voice_terminal.frontend import Frontend
+from voice_terminal.kws import WakeWordDetector
 from voice_terminal.terminal import FrameRouter, Mode
 from voice_terminal.vad import WINDOW, SpeechDetector
 
@@ -123,6 +128,9 @@ def test_example_config_loads():
     config = load_config(ROOT / "terminal.example.toml")
     assert config.device_id == "02:76:74:00:00:01"
     assert config.audio.frontend == ["hpf", "ns", "agc"]
+    assert config.wake.stream_offsets_ms == [0, 80, 160, 240]
+    assert config.audio.silent_reopen_s == 10
+    assert "restart-audio-device.ps1" in config.audio.silent_recover_command
     assert config.client_id
     assert config.path(config.vad.model) == ROOT / "models" / "silero_vad.onnx"
 
@@ -135,6 +143,12 @@ def test_config_rejects_unknown_options(tmp_path):
     path.write_text("[terminal]\n", encoding="utf-8")
     with pytest.raises(ValueError, match="device_id"):
         load_config(path)
+    for offsets in ("[]", "[0, -80]", "[0, 80.5]"):
+        path.write_text(f'[terminal]\ndevice_id = "x"\n[wake]\nstream_offsets_ms = {offsets}\n', encoding="utf-8")
+        with pytest.raises(ValueError, match="stream_offsets_ms"):
+            load_config(path)
+    path.write_text('[terminal]\ndevice_id = "x"\n[wake]\nstream_offsets_ms = [160, 0, 160]\n', encoding="utf-8")
+    assert load_config(path).wake.stream_offsets_ms == [0, 160]
 
 
 class ControlTarget:
@@ -271,3 +285,85 @@ def test_router_guard_keeps_early_speech_as_pre_roll():
     speech.script = ["start"]
     router.on_frame(frame)
     assert posted[-1] == ("speech_start", [])  # 10 ms is less than one packet
+
+
+class FakeKwsStream:
+    def __init__(self):
+        self.samples = self.decoded = self.resets = 0
+
+    def accept_waveform(self, rate, samples):
+        assert rate == 16000
+        self.samples += len(samples)
+
+
+class FakeSpotter:
+    """Ready after every 320 ms per stream, like the encoder's chunks; wake(stream index, decode count)."""
+
+    CHUNK = 5120
+
+    def __init__(self, wake=lambda index, decoded: False):
+        self.streams = []
+        self.wake = wake
+
+    def create_stream(self):
+        self.streams.append(FakeKwsStream())
+        return self.streams[-1]
+
+    def is_ready(self, stream):
+        return stream.samples - stream.decoded * self.CHUNK >= self.CHUNK
+
+    def decode_stream(self, stream):
+        stream.decoded += 1
+
+    def decode_streams(self, streams):
+        raise AssertionError("this model only takes one stream per call")
+
+    def get_result(self, stream):
+        return "你好小七" if self.wake(self.streams.index(stream) % 4, stream.decoded) else ""
+
+    def reset_stream(self, stream):
+        stream.resets += 1
+
+
+def feed(detector, seconds):
+    hits = []
+    for _ in range(int(seconds * 100)):
+        hit = detector.accept(np.zeros(160, dtype=np.float32))
+        if hit:
+            hits.append(hit)
+    return hits
+
+
+def test_wake_streams_are_offset_and_decoded_one_at_a_time():
+    spotter = FakeSpotter()
+    config = WakeConfig(max_active_paths=16, stream_offsets_ms=[0, 80, 160, 240])
+    detector = WakeWordDetector(config, Path("."), spotter=spotter)
+    assert feed(detector, 1.0) == []
+    assert [s.samples for s in spotter.streams] == [16000, 14720, 13440, 12160]
+    assert [s.decoded for s in spotter.streams] == [3, 2, 2, 2]
+
+    detector.reset()  # fresh streams, offset again
+    feed(detector, 0.5)
+    assert len(spotter.streams) == 8
+    assert [s.samples for s in spotter.streams[4:]] == [8000, 6720, 5440, 4160]
+
+
+def test_any_wake_stream_wakes_once_and_resets_all():
+    spotter = FakeSpotter(wake=lambda index, decoded: index == 2 and decoded == 1)
+    detector = WakeWordDetector(WakeConfig(stream_offsets_ms=[0, 80, 160, 240]), Path("."), spotter=spotter)
+    assert feed(detector, 1.0) == ["你好小七"]
+    assert [s.resets for s in spotter.streams] == [1, 1, 1, 1]
+
+
+def test_microphone_measures_exact_silence():
+    mic = Microphone("mic", "", Frontend([]), lambda frame: None)
+    status = SimpleNamespace(input_overflow=False)
+    mic._running = True
+    mic.last_callback = mic.last_sound = time.monotonic() - 20
+    mic._callback(np.zeros((80, 1), dtype=np.float32), 80, None, status)
+    assert 19 < mic.silent_s < 21 and not mic.heard_sound
+    assert mic.health()["mic_silent_ms"] > 19000
+    mic._callback(np.full((80, 1), 1e-4, dtype=np.float32), 80, None, status)
+    assert mic.silent_s < 1 and mic.heard_sound
+    mic.last_callback -= 10  # stalled: no callbacks is not silence
+    assert mic.stalled and mic.silent_s == 0.0
