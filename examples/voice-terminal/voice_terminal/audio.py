@@ -151,6 +151,8 @@ class Microphone:
         self.queue_peak = 0
         self.max_callback_gap_ms = 0.0
         self.max_queue_age_ms = 0.0
+        self.last_sound = 0.0  # last callback with any non-zero sample
+        self.heard_sound = False
 
     def start(self):
         sd = _sd()
@@ -166,7 +168,7 @@ class Microphone:
             callback=self._callback, latency="high",
         )
         self._stream.start()
-        self.last_callback = time.monotonic()
+        self.last_callback = self.last_sound = time.monotonic()
         log.info("mic [%d] %s @ %d Hz", index, self.name, self.rate)
 
     def _callback(self, indata, frames, _time, status):
@@ -177,6 +179,9 @@ class Microphone:
         self.callback_samples += frames
         if status.input_overflow:
             self.overflows += 1
+        if indata.any():
+            self.last_sound = now
+            self.heard_sound = True
         try:
             self._queue.put_nowait((now, indata[:, 0].copy()))
             self.queue_peak = max(self.queue_peak, self._queue.qsize())
@@ -206,11 +211,19 @@ class Microphone:
                 "mic_callback_age_ms": (time.monotonic()-self.last_callback)*1000 if self.last_callback else None,
                 "mic_worker_alive": bool(self._worker and self._worker.is_alive()),
                 "mic_queue_chunks": self._queue.qsize(), "mic_queue_peak_chunks": self.queue_peak,
-                "mic_max_queue_age_ms": self.max_queue_age_ms, "mic_max_callback_gap_ms": self.max_callback_gap_ms}
+                "mic_max_queue_age_ms": self.max_queue_age_ms, "mic_max_callback_gap_ms": self.max_callback_gap_ms,
+                "mic_silent_ms": self.silent_s * 1000, "mic_heard_sound": self.heard_sound}
 
     @property
     def stalled(self) -> bool:
         return self._running and time.monotonic() - self.last_callback > STALL_SECONDS
+
+    @property
+    def silent_s(self) -> float:
+        """How long the device has delivered only exact zeros (0 while it is stalled)."""
+        if not self._running or self.stalled:
+            return 0.0
+        return time.monotonic() - self.last_sound
 
     def stop(self):
         self._running = False
@@ -387,6 +400,7 @@ class FileMicrophone:
         self.name, self.rate = "file", RATE
         self.overflows = self.dropped = 0
         self.stalled = False
+        self.silent_s, self.heard_sound = 0.0, True  # always adds a little noise
 
     def start(self):
         clips = []

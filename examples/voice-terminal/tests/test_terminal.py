@@ -1,8 +1,11 @@
 import asyncio
+import json
+import sys
 
 import numpy as np
 from conftest import FakeConnection, FakeMic, FakeSpeaker, wait_for
 
+from voice_terminal import terminal as terminal_module
 from voice_terminal.codec import OpusEncoder
 from voice_terminal.terminal import Event, Mode, State, Terminal
 
@@ -153,5 +156,69 @@ def test_reconnects_and_drops_conversation(config):
         assert terminal._dialog is None
         assert terminal.stats["reconnects"] == 1
         await stop(terminal, task)
+
+    asyncio.run(scenario())
+
+
+def test_exit_word_ends_the_conversation_and_drops_the_answer(config):
+    async def scenario():
+        terminal, speaker = make_terminal(config)
+        config.session.idle_timeout_s = 5  # standby must come from the exit word, not the timeout
+        task, conn = await start(terminal)
+        terminal._uplink.put_nowait(Event("wake", "你好小七"))
+        await wait_for(lambda: terminal.state == State.AWAKE)
+        terminal._uplink.put_nowait(Event("speech_start", []))
+        terminal._uplink.put_nowait(Event("speech_end"))
+        await wait_for(lambda: terminal.state == State.THINKING)
+
+        terminal._on_json({"type": "stt", "text": "好的，拜拜"})
+        answer(terminal, "拜拜，晚安。")  # the server's answer to it: not played
+        await wait_for(lambda: terminal.state == State.STANDBY, timeout=1.0)
+        assert ("abort",) in conn.sent
+        assert len(speaker.played) == 2  # wake prompt + goodbye
+        assert speaker.fed == 0 and terminal.stats["turns"] == 0
+        assert terminal.router.mode == Mode.WAKE
+
+        answer(terminal, "提醒：该关窗了。")  # after that answer's stop, server speech plays again
+        await wait_for(lambda: terminal.stats["turns"] == 1)
+        assert speaker.fed > 0
+        await stop(terminal, task)
+
+    asyncio.run(scenario())
+
+
+class SilentMic(FakeMic):
+    def __init__(self, silent_s, heard_sound):
+        self.silent_s, self.heard_sound = silent_s, heard_sound
+
+
+def test_silent_mic_reopens_then_runs_recover_command(config, monkeypatch, tmp_path):
+    monkeypatch.setattr(terminal_module, "AUDIO_CHECK_SECONDS", 0.01)
+    monkeypatch.setattr(terminal_module, "SILENT_RETRY_SECONDS", 0.0)
+    monkeypatch.setattr(terminal_module, "refresh_devices", lambda: None)
+    (tmp_path / "mark.py").write_text("open('recovered.txt', 'a').write('x')\n", encoding="utf-8")
+    config.audio.silent_reopen_s = 5
+    config.audio.silent_recover_command = f'"{sys.executable}" mark.py'
+    # Went silent; still silent after the plain reopen; has sound after the command.
+    mics = iter([SilentMic(10, True), SilentMic(10, False), SilentMic(0, True)])
+    made = []
+
+    def make_mic(on_frame):
+        made.append(next(mics))
+        return made[-1]
+
+    async def scenario():
+        FakeConnection.instances.clear()
+        terminal = Terminal(config, make_mic, FakeSpeaker(), None, NoSpeech(), connection_factory=FakeConnection)
+        task = asyncio.create_task(terminal.run())
+        await wait_for(lambda: len(made) == 3 and terminal._silent_attempts == 0, timeout=10)
+        assert (tmp_path / "recovered.txt").read_text() == "x"  # only after the reopen did not help
+        assert terminal.status()["mic_silent_s"] == 0.0
+        await asyncio.sleep(0.05)
+        assert len(made) == 3
+        await stop(terminal, task)
+        lines = (tmp_path / "logs" / "audio-health.jsonl").read_text(encoding="utf-8").splitlines()
+        kinds = [json.loads(line)["event"] for line in lines]
+        assert kinds.count("capture_silent") == 2 and "silent_recover" in kinds and "capture_sound_back" in kinds
 
     asyncio.run(scenario())

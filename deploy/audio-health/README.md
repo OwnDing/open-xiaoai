@@ -19,7 +19,7 @@
 2. 桥接端 `input_rate_hz` 应接近 16000。`recording_rpc.ok` 只表示 RPC 是否收到回复，不能单独证明麦克风有数据，应同时看音频速率和新鲜度。`sequence_gaps`/`missing_samples` 增长表示序号或采样范围不连续；`sequence_reorders` 表示重复或乱序；旧客户端没有元数据时记 `metadata_missing_packets`。换采集 ID 不算丢包。
 3. `window.kws_samples` 是模型处理的采样数，`skipped_samples` 及 `mode_*_samples` 是因监听、播音或其他模式跳过的采样数。待命且音频正常时，KWS 应持续处理；`kws_thread_alive=false`、`kws_errors` 增长、缓冲积压或 `kws_rtf` 接近/超过 1，可指向程序/算力问题。KWS 为流式分批模型，单帧耗时偶尔波动，以整个窗口的 RTF 为主。
 4. `rms`/`peak`/`zero_ratio`/`clip_ratio` 反映送给模型的信号；`level_samples=0` 时该窗口没有信号统计，不把 RMS=0 解读成静音。非零音量不能证明有人说了唤醒词，健康日志也不能单独计算真实唤醒率。
-5. Windows 终端另记设备原生 `mic_rate_hz`、输入回调和工作线程累计采样、溢出/丢样、回调间隔及处理队列延迟。`mic_*` 最大值自本次打开设备累计，重开时通过 `capture_start`/`capture_stop` 区分；KWS 输入统一为 16 kHz。`GET http://127.0.0.1:18110/status` 的 `audio_health` 不会重置汇总窗口。
+5. Windows 终端另记设备原生 `mic_rate_hz`、输入回调和工作线程累计采样、溢出/丢样、回调间隔及处理队列延迟，以及设备送来的原始数据连续全是 0 的时长 `mic_silent_ms`（`mic_heard_sound` 表示本次打开后是否收到过非零数据）；全是 0 超时记 `capture_silent`，运行恢复命令记 `silent_recover`，恢复有声后记 `capture_sound_back`。`mic_*` 最大值自本次打开设备累计，重开时通过 `capture_start`/`capture_stop` 区分；KWS 输入统一为 16 kHz。`GET http://127.0.0.1:18110/status` 的 `audio_health` 不会重置汇总窗口。
 6. 终端每 10 秒向后端镜像一条 `audio_health` 消息，后端只保留白名单统计，并附加当前连接收到的 Opus 包/字节累计数。待命时 Opus 包数为零属于正常状态，连续环境音留在本机唤醒模型。诊断消息不触发会话、ASR、LLM，也不更新会话空闲计时器。镜像失败记 `health_mirror_errors`，本机日志继续写入。
 
 ## 查看/导出

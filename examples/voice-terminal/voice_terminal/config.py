@@ -5,6 +5,8 @@ import uuid
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
+from .exit_words import DEFAULT_EXIT_WORDS
+
 
 @dataclass
 class ServerConfig:
@@ -24,6 +26,14 @@ class AudioConfig:
     output_gain: float = 1.0
     # Jitter buffer: after running dry, queue this much before playing again.
     playback_buffer_ms: int = 240
+    # A live mic always picks up some noise. If it delivers nothing but exact zeros
+    # this long (a Bluetooth headset can keep the device open with its voice link
+    # gone), reopen the devices; 0 disables the check.
+    silent_reopen_s: float = 10.0
+    # Still only zeros after that reopen: run this command (from the config's
+    # directory), then reopen again; repeated every few minutes while it lasts.
+    # Empty: only reopen. scripts/restart-audio-device.ps1 restarts the mic's driver.
+    silent_recover_command: str = ""
 
 
 @dataclass
@@ -32,6 +42,13 @@ class WakeConfig:
     model_dir: str = "models/kws"
     threshold: float = 0.2
     score: float = 2.0
+    # Candidates the decoder keeps; more misses fewer keywords and costs more CPU.
+    max_active_paths: int = 8
+    # Run one stream per offset (ms); any of them may wake. The model reads audio in
+    # 320 ms chunks and a keyword can be lost depending on where it falls in one,
+    # so streams a fraction of a chunk apart miss different utterances. Each stream
+    # costs as much CPU as the first.
+    stream_offsets_ms: list[int] = field(default_factory=lambda: [0])
 
 
 @dataclass
@@ -64,6 +81,10 @@ class SessionConfig:
     wake_prompt: str = ""
     no_reply_prompt: str = ""
     goodbye_prompt: str = ""
+    # Saying only one of these (optionally with 好的/谢谢 or the wake word, as in
+    # "你好小七，拜拜") ends the conversation at once instead of after the idle
+    # timeout. Not words that start a scene ("晚安"): they would only end it. [] disables.
+    exit_words: list[str] = field(default_factory=lambda: list(DEFAULT_EXIT_WORDS))
 
 
 @dataclass
@@ -126,4 +147,10 @@ def load_config(path: str | Path) -> TerminalConfig:
     unknown_stages = set(config.audio.frontend) - {"hpf", "ns", "agc"}
     if unknown_stages:
         raise ValueError(f"unknown [audio] frontend stage(s): {', '.join(sorted(unknown_stages))}")
+    offsets = config.wake.stream_offsets_ms
+    if not offsets or any(not isinstance(ms, int) or ms < 0 for ms in offsets):
+        raise ValueError("[wake] stream_offsets_ms must be a non-empty list of whole milliseconds >= 0")
+    config.wake.stream_offsets_ms = sorted(set(offsets))
+    if config.wake.max_active_paths < 1:
+        raise ValueError("[wake] max_active_paths must be at least 1")
     return config

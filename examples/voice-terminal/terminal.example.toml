@@ -21,6 +21,11 @@ frontend = ["hpf", "ns", "agc"]
 output_gain = 1.0
 # After the speaker runs dry, queue this much before playing again (avoids crackle).
 playback_buffer_ms = 240
+# Only exact zeros from the mic this long: reopen the devices (0 disables).
+silent_reopen_s = 10
+# Still only zeros after the reopen: restart the mic's driver, then reopen
+# (repeated every 5 minutes while it lasts). -Name is [audio] input.
+silent_recover_command = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart-audio-device.ps1 -Name "耳机 (京鱼座蓝牙小黑胶)"'
 
 [wake]
 keywords = ["你好小七"]
@@ -28,10 +33,17 @@ model_dir = "models/kws"
 # The bridge uses 0.2; the 8 kHz Bluetooth mic needs a looser threshold.
 threshold = 0.05
 score = 2.0
+# Wider beam and four streams 80 ms apart: on this mic 14 of 20 recorded
+# "你好小七" wake instead of 9 (8 paths, one stream). Each stream costs as much CPU
+# (four: about half of one N100 core; [0, 160] gets 11 of 20 for a quarter).
+max_active_paths = 16
+stream_offsets_ms = [0, 80, 160, 240]
 
 [vad]
 model = "models/silero_vad.onnx"
-threshold = 0.5
+# Speech from the 8 kHz Bluetooth mic often scores only 0.5-0.8; at 0.5 some
+# requests after waking were never sent.
+threshold = 0.3
 min_speech_ms = 250
 min_silence_ms = 500
 short_utterance_ms = 800
@@ -50,6 +62,9 @@ reply_timeout_s = 90
 wake_prompt = "prompts/wake.mp3"
 no_reply_prompt = "prompts/no_reply.mp3"
 goodbye_prompt = "prompts/goodbye.mp3"
+# Saying only one of these (with 好的/谢谢 or the wake word allowed) ends the
+# conversation at once. Not "晚安": it starts the sleep scene. [] disables.
+exit_words = ["拜拜", "再见", "退出", "退下", "没事了", "不用了", "结束对话", "bye", "goodbye"]
 
 [control]
 host = "127.0.0.1"
