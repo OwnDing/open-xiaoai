@@ -5,7 +5,7 @@ import threading
 import time
 
 from config import APP_CONFIG
-from xiaozhi.event import EventManager
+from xiaozhi.event import EventManager, exit_word
 from xiaozhi.ref import set_xiaozhi
 from xiaozhi.services.audio.kws import KWS
 from xiaozhi.services.audio.vad import VAD
@@ -354,8 +354,13 @@ class XiaoZhi:
         text = data.get("text", "")
         if text:
             print(f"💬 我说：{text}")
-            self._tts_gate = False
-            EventManager.on_stt()
+            if exit_word(text):
+                # The server answers "拜拜" too; that answer is not played.
+                self._tts_gate = True
+                EventManager.on_exit_words(text)
+            else:
+                self._tts_gate = False
+                EventManager.on_stt()
             self.schedule(lambda: self.set_chat_message("user", text))
 
     def _handle_llm_message(self, data):

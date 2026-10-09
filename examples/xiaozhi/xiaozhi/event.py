@@ -27,11 +27,66 @@ def get_barge_in_setting(key, default):
     return APP_CONFIG.get("barge_in", {}).get(key, default)
 
 
+DEFAULT_EXIT_WORDS = ("拜拜", "再见", "退出", "退下", "没事了", "不用了", "结束对话", "bye", "goodbye")
+# Said around an exit word without changing what it means.
+_EXIT_FILLERS = ("你好", "您好", "好的", "好吧", "好", "行", "嗯", "哦", "那", "那就",
+                 "谢谢", "谢了", "ok", "okay")
+_PARTICLES = "吧啦了呀啊哈哦喔嘛呗"
+
+
+def _plain(text):
+    return "".join(ch for ch in str(text).lower() if ch.isalnum())
+
+
+def match_exit_words(text, words, keywords=()):
+    """The exit word `text` asks to end the conversation with, or None.
+
+    Only when that is all it says: "拜拜", "好的，谢谢，再见", "你好小七，拜拜".
+    In the follow-up window the wake word reaches the recognizer too, at times
+    misheard ("你好小琪", "亲"), and after a barge-in the end of "七" can come
+    along. So at most one character outside the wake words may be left over;
+    "关灯，拜拜" or "用英语怎么说再见" go to the server as usual.
+    """
+    rest = _plain(text)
+    exits = sorted({w for w in map(_plain, words) if w}, key=len, reverse=True)
+    found = None
+    while rest:
+        word = next((w for w in exits if rest.endswith(w)), None)
+        if word:
+            found = found or word
+        else:
+            word = next((w for w in _EXIT_FILLERS if rest.endswith(w)), None)
+            if not word and rest[-1] in _PARTICLES:
+                word = rest[-1]
+            if not word:
+                break
+        rest = rest[: -len(word)]
+    if not found:
+        return None
+    names = {k for k in map(_plain, keywords) if k}
+    names |= {k[i:] for k in names for i in range(len(k) - 1)}  # 小七 for 你好小七
+    leading = sorted(names | set(_EXIT_FILLERS), key=len, reverse=True)
+    while rest:
+        word = next((w for w in leading if rest.startswith(w)), None)
+        if not word:
+            break
+        rest = rest[len(word):]
+    name_chars = set("".join(names))
+    return found if sum(ch not in name_chars for ch in rest) <= 1 else None
+
+
+def exit_word(text):
+    wakeup = APP_CONFIG.get("wakeup", {})
+    return match_exit_words(text, wakeup.get("exit_words", DEFAULT_EXIT_WORDS),
+                            wakeup.get("keywords", ()))
+
+
 class Step:
     idle = "idle"
     on_interrupt = "on_interrupt"
     on_wakeup = "on_wakeup"
     on_barge_in = "on_barge_in"
+    on_exit_words = "on_exit_words"
     on_tts_start = "on_tts_start"
     on_tts_end = "on_tts_end"
     on_speech = "on_speech"
@@ -174,11 +229,17 @@ class __EventManager:
         print(f"✋ 打断小七: {text}")
         self._begin_session(Step.on_barge_in)
 
+    def on_exit_words(self, text):
+        """用户说了退出词（拜拜、再见……）：不等超时，马上退出唤醒"""
+        print(f"👋 退出词: {text}")
+        self._begin_session(Step.on_exit_words, ignored_steps=(Step.idle,))
+
     def on_tts_end(self, session_id):
         """TTS结束"""
         self._begin_session(
             Step.on_tts_end,
-            ignored_steps=(Step.idle, Step.on_interrupt, Step.on_tts_end, Step.on_barge_in),
+            ignored_steps=(Step.idle, Step.on_interrupt, Step.on_tts_end, Step.on_barge_in,
+                           Step.on_exit_words),
         )
 
     def on_tts_start(self, session_id):
@@ -250,6 +311,16 @@ class __EventManager:
         if trigger_step != Step.on_tts_end:
             await xiaozhi.abort_tts_output()
         if not self._is_current_session(session_id):
+            return
+        if trigger_step == Step.on_exit_words:
+            # Stop the server's answer to "拜拜" (it would not be played, see
+            # ignore_tts_until_stt) and say goodbye at once. After "退出" or
+            # "关闭" the server closes the connection itself.
+            try:
+                await xiaozhi.protocol.send_abort_speaking(AbortReason.ABORT)
+            except Exception as error:
+                print(f"⚠️ 退出时通知服务端失败: {error}")
+            await self._end_session(session_id, xiaozhi, speaker, reason="exit_words")
             return
         await xiaozhi.protocol.send_abort_speaking(AbortReason.ABORT)
 
@@ -348,14 +419,14 @@ class __EventManager:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
-    async def _end_session(self, session_id, xiaozhi, speaker):
+    async def _end_session(self, session_id, xiaozhi, speaker, reason="no_speech_timeout"):
         with self.state_lock:
             if session_id != self.session_id:
                 return
             self.current_step = Step.idle
         kws = get_kws()
         kws.pause()
-        HEALTH.emit("session_exit_start", session_id=session_id, reason="no_speech_timeout")
+        HEALTH.emit("session_exit_start", session_id=session_id, reason=reason)
         try:
             # IDLE stops VAD and the conversation streams. KWS has its own
             # stream, so keep it paused through the goodbye and its echo.
