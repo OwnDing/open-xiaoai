@@ -24,6 +24,8 @@ metadata:
 
 需要每次临场判断的事（“每天晚上十一点看看有没有没关的灯，有就关掉告诉我”）不做成联动，
 用 `cronjob_manage` 建定时任务，prompt 里写清楚要检查什么、做什么、播报什么。
+每天定时汇报设备情况（“每天晚上八点告诉我鱼缸灯今天亮了多久”）也一样：prompt 里先调用
+`mcp__home_history__device_history` 查询，再用 xiaoqi_announce 播报查到的结果。
 
 ## 步骤
 

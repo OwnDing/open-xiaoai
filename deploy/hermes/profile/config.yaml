@@ -51,7 +51,7 @@ platform_toolsets:
 
 # Voice-taught scenes and linkages (stored as Home Assistant scripts and
 # automations) plus the script.xiaoqi_announce speaker script; see
-# mcp/home_rules. Only these two variables reach the server process.
+# mcp/home_rules. Only these two variables reach the server processes.
 mcp_servers:
   home_rules:
     command: /opt/hermes/.venv/bin/python
@@ -61,6 +61,19 @@ mcp_servers:
       HASS_URL: "${HASS_URL}"
       HASS_TOKEN: "${HASS_TOKEN}"
     # No generic resource/prompt helper tools: the server only offers its four tools.
+    tools:
+      resources: false
+      prompts: false
+  # Read-only device history from the HA recorder ("鱼缸灯今天亮了多久"); see
+  # mcp/home_history. Cron jobs get it too: Hermes adds every MCP server to a
+  # job's enabled_toolsets.
+  home_history:
+    command: /opt/hermes/.venv/bin/python
+    args: ["-m", "home_history.server"]
+    cwd: /opt/data/mcp
+    env:
+      HASS_URL: "${HASS_URL}"
+      HASS_TOKEN: "${HASS_TOKEN}"
     tools:
       resources: false
       prompts: false

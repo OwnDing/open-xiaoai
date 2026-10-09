@@ -17,7 +17,7 @@ Latency results and the POC evaluation are in
 |---|---|
 | `docker-compose.yml` | Hermes gateway (`hermes` container, volume `hermes-data`), joined to `xiaozhi-server_default` |
 | `.env.example` | Keys: `API_SERVER_KEY`, `DEEPSEEK_API_KEY`, `TAVILY_API_KEY`, `HASS_URL`, `HASS_TOKEN` |
-| `profile/` | The voice profile: `config.yaml`, `SOUL.md` (persona + device table + saved scene phrases), `skills/` (sleep-mode, home-rules), `mcp/home_rules` (scene/linkage MCP server) |
+| `profile/` | The voice profile: `config.yaml`, `SOUL.md` (persona + device table + saved scene phrases), `skills/` (sleep-mode, home-rules), `mcp/home_rules` (scene/linkage MCP server), `mcp/home_history` (device history MCP server) |
 | `switch-llm.ps1`, `switch_llm.py` | Switch xiaozhi-server between `hermes` and direct `deepseek` (backs up `.config.yaml` first) |
 | `ha_device_table.py` | Generates the Home Assistant device table inside `profile/SOUL.md` |
 | `demo-ha/` | Virtual Home Assistant used for the POC benchmarks (not deployed any more) |
@@ -86,6 +86,16 @@ duration or clock time, not “几点”) gets a different reminder, logged as
 `定时控制请求未调用工具`: create a one-shot `cronjob_manage` job instead of
 calling `ha_call_service` now. Any tool still satisfies the guard there, since
 “现在三点了，把灯关了” means now.
+
+A question about a device's past (“鱼缸灯今天亮了多久”, “客厅灯几点开的”, “空调昨天开了几次”,
+“书房灯是谁关的”) must reach `mcp__home_history__device_history`; without it the
+reply is dropped and retried, logged as `设备历史问题未查询`. Only past phrasing
+counts (了/过/着/的 after the verb) together with a device word, so “去纽约要多久”
+(no device), “空调开多久合适” (advice), “洗衣机还要多久” (what is left) and
+“鱼缸灯几点关” (the future) are left alone. A follow-up without a device name
+(“我问你今天开了多久？”) counts when the previous question named one and the last
+reply gave no figures. Tested on all 944 distinct user utterances in Hermes'
+history (2026-10-09): 5 matched, all real history questions.
 
 ## Timed device control (cron)
 
@@ -168,6 +178,40 @@ dropped and an urgent one is spoken. Do-not-disturb does not block play-text
 (tested on the OH2P), so the script never switches it. Linkages, reminders (cron jobs) and timed device actions all call it through
 `ha_call_service` (domain `script`, service `xiaoqi_announce`). Only the
 living-room XiaoAi speaks; the voice terminals do not.
+
+## Device history (home_history)
+
+Hermes' own Home Assistant tools only see the present, so 小七 used to answer
+“鱼缸灯今天亮了多久” with “插座没有记录” (and wrote that into its memory).
+[`profile/mcp/home_history`](profile/mcp/home_history) is a read-only stdio MCP
+server (`mcp_servers.home_history`, same `HASS_URL`/`HASS_TOKEN`) with one tool,
+`mcp__home_history__device_history(entity_ids, period, start?, end?)`. It reads
+`/api/history` and `/api/logbook` and does all the arithmetic, because the
+non-thinking voice model is unreliable at adding up timestamps:
+
+- `period`: `today`, `yesterday`, `last_24h`, `this_week`, `last_7_days`,
+  `this_month`, `last_30_days`, in HA's time zone; `start`/`end` (`HH:MM`,
+  `yesterday 18:00`, `YYYY-MM-DD HH:MM`) for spans such as 昨晚.
+- Switches, lights, fans, binary sensors, TVs, AC: `on_total` (“2小时28分”),
+  `times_switched_on`, `on_periods` with on/off times and who did it
+  (`小七` = through Home Assistant: voice or a cron job; `联动：…`/`场景：…`;
+  `米家App、小爱同学或手动` when the change came from the device's cloud),
+  `per_day` and `average_per_full_day` for longer spans. Offline time is left
+  out and does not split a period. For a device with a power sensor (W/kW,
+  found through HA's device registry) it adds `power` with `max` and
+  `estimated_energy_kwh`: the plug's own 0.01 kWh counter is too coarse.
+- Sensors: min/max with times, time-weighted average; meters (`total_increasing`):
+  amount used, surviving a reset. Event entities: how often. Other states:
+  time in each state and the latest changes.
+- `records_from` / `no_records` when the span starts before the recorder's
+  history (HA keeps 30 days here, see `../homeassistant`).
+
+Cron jobs get the tool as well: Hermes adds every MCP server to a job's
+`enabled_toolsets`, so “每天晚上八点告诉我鱼缸灯今天亮了多久” is a daily job
+that queries and then calls `script.xiaoqi_announce`.
+
+Unit tests: `cd profile/mcp && python3 -m unittest test_home_history`
+(uses the fish tank's real history of 2026-10-05..09).
 
 ## Profile choices that matter for latency
 

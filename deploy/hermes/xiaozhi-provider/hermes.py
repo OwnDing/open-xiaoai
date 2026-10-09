@@ -76,8 +76,7 @@ FILLER_RETRY_NOTE = (
 STATE_SUBJECTS = re.compile(DEVICE_WORDS.pattern + r"|温度|湿度|漏水|水浸|窗户|门窗")
 STATE_ASK = re.compile(
     r"开着|关着|亮着|灭着|开没开|关没关|是不是开|是不是关|有没有开|有没有关|几盏"
-    r"|哪些.{0,4}(开|亮)|状态|现在.{0,6}(温度|湿度|多少度)|漏水|几点.{0,6}(开|关)"
-    r"|什么时候.{0,6}(开|关)"
+    r"|哪些.{0,4}(开|亮)|状态|现在.{0,6}(温度|湿度|多少度)|漏水"
     r"|(冰箱|冷藏|冷冻|空调).{0,8}(多少度|几度)|(洗|烘|干)(完|好)了|还(要|剩|有)多|剩多少|剩余"
 )
 # Preferences are answered from memory ("我睡觉空调一般开几度").
@@ -86,6 +85,32 @@ STATE_RETRY_NOTE = (
     "（系统提示：这是询问设备当前状态的问题，但你上一次没有查询就回答了。"
     "聊天记录和记忆里的状态可能早已过时，现在必须调用 ha_get_state 或 ha_list_entities "
     "查询后再回答。）"
+)
+# Questions about the past ("鱼缸灯今天亮了多久", "客厅灯几点开的", "空调昨天开了几次",
+# "是谁关的灯") need the recorder history; ha_get_state only knows the present.
+# Only past phrasing counts (了/过/着/的), so advice ("空调开多久合适"), what is
+# left ("洗衣机还要多久") and the future ("鱼缸灯几点关") are not forced into it,
+# and a trip ("去纽约要多久") has no device word at all.
+HISTORY_VERB = r"(?:打开|关掉|关上|启动|运行|工作|加热|制冷|制热|开|亮|关|灭|用|洗|烘|转|跑|充|烧|扫|看|停)"
+HISTORY_LENGTH = r"(?:多久|多长时间|多少时间|几个?小时|几个?钟头|几分钟|多少分钟)"
+HISTORY_ASK = re.compile(
+    HISTORY_VERB + r"(?:了|过|着)" + HISTORY_LENGTH
+    + r"|" + HISTORY_VERB + HISTORY_LENGTH + r"了"
+    + r"|" + HISTORY_VERB + r"(?:了|过)(?:几次|多少次|几回)"
+    + r"|" + HISTORY_VERB + r"(?:几次|多少次|几回)了"
+    + r"|(?:什么时候|啥时候|哪会儿).{0,2}" + HISTORY_VERB + r"的"
+    + r"|点[^，。？！,.?!]{0,4}" + HISTORY_VERB + r"的"  # 几点开的, 三点关的, 八点二十分开的
+    # "是不是你关的", but not "灯是开的还是关的" / "是不是关的" (the present state).
+    + r"|是不是.{1,6}" + HISTORY_VERB + r"的"
+    + r"|谁" + HISTORY_VERB + r"(?:的|了)"
+    + r"|(?:用|耗)了多少.{0,2}电"
+)
+HISTORY_TOOLS = "mcp__home_history__"
+HISTORY_RETRY_NOTE = (
+    "（系统提示：这是询问设备过去情况的问题（开了多久、几点开的或关的、开过几次、谁关的），"
+    "你上一次没有查询就回答了。Home Assistant 有设备的历史记录，现在必须调用 "
+    "mcp__home_history__device_history 查询（period 用 today、yesterday 等），按工具算好的结果回答，"
+    "不要说没有记录或查不了，也不要照搬记忆里的说法。）"
 )
 RETRY_NOTE = (
     "（系统提示：这是设备控制请求，但你上一次没有调用任何工具就回答了。"
@@ -121,6 +146,8 @@ RULE_WORDS = re.compile(
     # "漏水了马上告诉我", "洗完了提醒我"; not "告诉我书房灯开着没" (a state question).
     r"|了.{0,4}(就|马上|立刻|立即|要)?(提醒|告诉|通知)我"
 )
+# A reply that already answered a history question ("两小时二十八分", "开了三次").
+HISTORY_FIGURES = re.compile(NUMBER + r"\s*(?:个半?|半)?\s*(?:小时|钟头|分钟?|次)")
 # A command may be unclear or overheard ("会关，现在会关" said to someone else right
 # after "11点关鱼缸灯"); asking back claims nothing, so it may stand without a tool.
 # A question that also claims success ("好了，灯关了，还要别的吗？") may not.
@@ -209,7 +236,16 @@ def is_unclear_after_schedule(dialogue, request):
     reply = _message_text(before[-1]).strip()
     if QUESTION_END.search(reply) or not SCHEDULE_CONFIRMED.search(reply):
         return False
-    return bool(VAGUE_ACTION.search(request) and not is_control_request(request) and not LATER_WORDS.search(request))
+    # "上午十一点关的" answering a history question also looks like a confirmed schedule.
+    asked = [m for m in before if m.get("role") == "user"]
+    if asked and HISTORY_ASK.search(_message_text(asked[-1])):
+        return False
+    return bool(
+        VAGUE_ACTION.search(request)
+        and not DEVICE_WORDS.search(request)
+        and not is_control_request(request)
+        and not LATER_WORDS.search(request)
+    )
 
 
 def is_rule_request(text):
@@ -218,6 +254,37 @@ def is_rule_request(text):
 
 def is_scheduled_control(text):
     return is_control_request(text) and bool(LATER_WORDS.search(text))
+
+
+def is_history_question(text):
+    """A question about what a device did earlier, not also a command.
+
+    "鱼缸灯是不是三点关掉的" contains the command word 关掉, so the history phrase is
+    taken out before checking for a command: "开了多久了，关掉吧" is still a command.
+    """
+    if not (DEVICE_WORDS.search(text) and HISTORY_ASK.search(text)) or PREFERENCE_WORDS.search(text):
+        return False
+    return not is_control_request(HISTORY_ASK.sub("", text))
+
+
+def is_history_follow_up(dialogue, request):
+    """"我问你今天开了多久？" with the device named only in the previous question.
+
+    Only when the previous reply gave no figures ("查不了"): repeating a history
+    answer from the chat is fine, and forcing a second lookup made the model
+    stumble ("亮了两次……不，就一次").
+    """
+    before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
+    users = [m for m in before if m.get("role") == "user"]
+    if before and before[-1].get("role") == "assistant" and HISTORY_FIGURES.search(_message_text(before[-1])):
+        return False
+    return bool(
+        users
+        and not DEVICE_WORDS.search(request)
+        and HISTORY_ASK.search(request)
+        and not PREFERENCE_WORDS.search(request)
+        and DEVICE_WORDS.search(_message_text(users[-1]))
+    )
 
 
 def is_state_question(text):
@@ -419,6 +486,8 @@ class LLMProvider(LLMProviderBase):
         elif self.tool_guard and is_rule_request(request):
             # Teaching or managing a scene/linkage: answered normally (see RULE_WORDS).
             required = note = reason = None
+        elif self.tool_guard and (is_history_question(request) or is_history_follow_up(dialogue, request)):
+            required, note, reason = HISTORY_TOOLS, HISTORY_RETRY_NOTE, "设备历史问题未查询"
         elif self.tool_guard and is_scheduled_control(request):
             # Any tool satisfies it: a time-of-day mention may still mean "now".
             required, note, reason = None, SCHEDULE_RETRY_NOTE, "定时控制请求未调用工具"
@@ -444,7 +513,8 @@ class LLMProvider(LLMProviderBase):
             return
 
         # Hold the reply until the required tool runs (any tool for commands,
-        # a Home Assistant tool for state questions); otherwise retry once.
+        # a Home Assistant tool for state questions, the history tool for the
+        # past); otherwise retry once.
         state = {"used_tool": False, "held": []}
 
         def guarded():

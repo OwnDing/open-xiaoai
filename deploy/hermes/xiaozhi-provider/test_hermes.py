@@ -225,7 +225,7 @@ class ProviderTests(unittest.TestCase):
 
     def test_state_questions_and_preferences(self):
         for text in ("现在有几盏灯开着？", "书房灯是不是开着", "卧室现在温度多少",
-                     "阳台漏水了吗", "客厅灯几点开的"):
+                     "阳台漏水了吗"):
             self.assertTrue(hermes.is_state_question(text), text)
         for text in ("我睡觉的时候，空调应该开多少度？", "我一般睡觉开几度空调",
                      "关闭书房灯", "为什么天空是蓝色的"):
@@ -239,6 +239,52 @@ class ProviderTests(unittest.TestCase):
             self.assertFalse(hermes.is_state_question(text), text)
         for text in ("冰箱冷藏调到4度", "打开冰箱速冻", "洗衣机关机"):
             self.assertTrue(hermes.is_control_request(text), text)
+
+    def test_history_questions(self):
+        for text in ("今天鱼缸灯亮了多久", "一天那个鱼缸灯开了多久啊？", "客厅灯几点开的",
+                     "鱼缸插座是不是三点关的", "鱼缸灯是不是三点关掉的", "客厅灯是八点二十分开的吗",
+                     "空调昨天开了几次", "书房灯是谁关的", "电视今天看了多长时间", "鱼缸灯开着多久了",
+                     "洗衣机洗了多久", "客厅灯什么时候打开的", "空调昨天用了多少电"):
+            self.assertTrue(hermes.is_history_question(text), text)
+        # No device, advice, what is left, the future, the present state, or a command.
+        for text in ("去美国纽约要多久", "开车去纽约要多久", "开车到灯塔要多久", "空调开多久合适",
+                     "洗衣机还要多久", "干衣机还要多久", "鱼缸灯几点关", "客厅灯开着吗",
+                     "灯是开的还是关的", "书房灯是不是关的", "把灯和开关分开的", "鱼缸灯一天开多久比较好",
+                     "鱼缸灯开了多久了，关掉吧", "现在几点了"):
+            self.assertFalse(hermes.is_history_question(text), text)
+
+    def test_history_follow_up_names_the_device_in_the_previous_question(self):
+        reply = {"role": "assistant", "content": "鱼缸插座只有开关状态，查不了。"}
+        for before, text, expected in (
+            ("一天那个鱼缸灯开了多久啊？", "我问你今天开了多久？", True),
+            ("鱼缸灯现在开着吗", "几点开的，几点钟关的。", True),
+            ("宁波到上海多远", "开车要多久", False),
+            ("鱼缸灯开着吗", "那去纽约要多久", False),
+        ):
+            dialogue = [user(before), reply, user(text)]
+            self.assertEqual(hermes.is_history_follow_up(dialogue, text), expected, text)
+        self.assertFalse(hermes.is_history_follow_up([user("我问你今天开了多久？")], "我问你今天开了多久？"))
+        # Already answered with figures: repeating them needs no second lookup.
+        for answered in ("今天开了两小时二十八分，早上八点三十三开到十一点。", "开了3次。", "亮了一个半小时。"):
+            dialogue = [user("一天那个鱼缸灯开了多久啊？"), {"role": "assistant", "content": answered},
+                        user("我问你今天开了多久？")]
+            self.assertFalse(hermes.is_history_follow_up(dialogue, "我问你今天开了多久？"), answered)
+
+    def test_history_question_answered_without_history_is_retried(self):
+        spoken, requests = self.run_turn(
+            "今天鱼缸灯亮了多久",
+            [("tool", "ha_get_state"), ("text", "鱼缸插座只有开关状态，查不了开了多久。")],
+            [("tool", "mcp__home_history__device_history"), ("text", "今天亮了两小时二十八分。")],
+        )
+        self.assertEqual(spoken, "今天亮了两小时二十八分。")
+        self.assertIn(hermes.HISTORY_RETRY_NOTE, requests[1])
+
+    def test_history_question_with_the_history_tool_is_not_retried(self):
+        spoken, requests = self.run_turn(
+            "鱼缸插座是不是三点关掉的",
+            [("tool", "mcp__home_history__device_history"), ("text", "不是，是十一点关的。")],
+        )
+        self.assertEqual((spoken, len(requests)), ("不是，是十一点关的。", 1))
 
     def test_device_command_without_tool_is_retried(self):
         spoken, requests = self.run_turn(
@@ -363,7 +409,16 @@ class ProviderTests(unittest.TestCase):
                          self.SCHEDULED + [user("好的，谢谢")],
                          self.SCHEDULED + [user("改成十二点关")],
                          self.SCHEDULED + [asked, user("现在关")],
-                         [user("鱼缸插座开着吗"), stated, user("关了吧")]):
+                         [user("鱼缸插座开着吗"), stated, user("关了吧")],
+                         # A device is named: a state question, not an overheard half sentence.
+                         self.SCHEDULED + [user("客厅灯现在开着吗")],
+                         # The times came from a history answer, not a schedule.
+                         [user("鱼缸灯今天是几点关的，谁关的"),
+                          {"role": "assistant", "content": "今天鱼缸灯是上午十一点关的，是我关的。"},
+                          user("客厅灯现在开着吗")],
+                         [user("今天鱼缸灯亮了多久"),
+                          {"role": "assistant", "content": "亮了两小时二十八分，早上八点三十三开，十一点关的。"},
+                          user("关了吧")]):
             self.assertFalse(hermes.is_unclear_after_schedule(dialogue, hermes._message_text(dialogue[-1])),
                              dialogue[-1])
 

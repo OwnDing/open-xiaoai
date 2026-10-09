@@ -12,9 +12,12 @@ touch "$HOME_DIR/.no-bundled-skills"
 cp /seed/profile/config.yaml "$HOME_DIR/config.yaml"
 cp /seed/profile/SOUL.md "$HOME_DIR/SOUL.md"
 cp -R /seed/profile/skills/. "$HOME_DIR/skills/"
-# MCP server for voice-taught scenes and linkages (config.yaml mcp_servers).
+# MCP servers (config.yaml mcp_servers): voice-taught scenes and linkages, and
+# device history (home_history imports home_rules' HA client).
 mkdir -p "$HOME_DIR/mcp"
-rm -rf "$HOME_DIR/mcp/home_rules"
-cp -R /seed/profile/mcp/home_rules "$HOME_DIR/mcp/"
+for server in home_rules home_history; do
+    rm -rf "$HOME_DIR/mcp/$server"
+    cp -R "/seed/profile/mcp/$server" "$HOME_DIR/mcp/"
+done
 chown -R 10000:10000 "$HOME_DIR"
 echo "Installed xiaoqi-home profile files into $HOME_DIR"

@@ -148,6 +148,27 @@ docker compose run --rm --entrypoint sh hermes /seed/profile/install.sh
 注意：“公开”只决定设备表里列出哪些实体，小七仍然可以用 `ha_list_entities` 查到其他实体。
 HA 默认不公开水浸传感器，需要在“公开”页面手动打开，否则它会从设备表里消失。
 
+## 历史记录保留 30 天
+
+小七回答“鱼缸灯今天亮了多久”“这个月平均每天开多久”这类问题，查的是 HA 的历史记录
+（Hermes 的 `home_history`，见 [`../hermes`](../hermes/README.md#device-history-home_history)）。
+HA 默认只保留 10 天，这里在 `configuration.yaml`（在 `homeassistant-config` 卷里，不在仓库中）
+末尾加了：
+
+```yaml
+recorder:
+  purge_keep_days: 30
+```
+
+改完先检查配置再重启：
+
+```powershell
+docker exec homeassistant python -m homeassistant --script check_config -c /config
+docker restart homeassistant
+```
+
+350 个实体、10 天时数据库约 15 MB，30 天大约 45 MB。
+
 ## 实测（2026-09-29）
 
 | 命令 | 灯状态变化 | 小七回复第一句 |
