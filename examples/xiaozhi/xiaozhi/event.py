@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import re
 import shlex
 import threading
 
@@ -28,27 +29,33 @@ def get_barge_in_setting(key, default):
 
 
 DEFAULT_EXIT_WORDS = ("拜拜", "再见", "退出", "退下", "没事了", "不用了", "结束对话", "bye", "goodbye")
+# Exit words that mean nothing but goodbye: opening an utterance they end the
+# conversation even when more follows.
+_GOODBYES = ("拜拜", "再见", "bye", "goodbye")
 # Said around an exit word without changing what it means.
 _EXIT_FILLERS = ("你好", "您好", "好的", "好吧", "好", "行", "嗯", "哦", "那", "那就",
-                 "谢谢", "谢了", "ok", "okay")
+                 "谢谢", "谢了", "没事", "不用", "ok", "okay")
 _PARTICLES = "吧啦了呀啊哈哦喔嘛呗"
+_CLAUSE_BREAKS = re.compile(r"[，。！？、；：,.!?;:…]+")
 
 
 def _plain(text):
     return "".join(ch for ch in str(text).lower() if ch.isalnum())
 
 
-def match_exit_words(text, words, keywords=()):
-    """The exit word `text` asks to end the conversation with, or None.
+def _bye(plain):
+    """"Bye bye" as the recognizer spells it ("拜 by", "拜e bye", "Goode bye")."""
+    plain = re.sub(r"goode?(?=by)", "", plain)
+    return re.sub(r"(?:拜e?|bye?){2,}", "拜拜", plain)
 
-    Only when that is all it says: "拜拜", "好的，谢谢，再见", "你好小七，拜拜".
-    In the follow-up window the wake word reaches the recognizer too, at times
-    misheard ("你好小琪", "亲"), and after a barge-in the end of "七" can come
-    along. So at most one character outside the wake words may be left over;
-    "关灯，拜拜" or "用英语怎么说再见" go to the server as usual.
-    """
-    rest = _plain(text)
-    exits = sorted({w for w in map(_plain, words) if w}, key=len, reverse=True)
+
+def _exit_list(words):
+    return sorted({_bye(w) for w in map(_plain, words) if w}, key=len, reverse=True)
+
+
+def _strip_exit_tail(rest, exits):
+    """Drop exit words, fillers and particles from the end of `rest`; returns
+    the exit word said last (None if there was none) and what is left."""
     found = None
     while rest:
         word = next((w for w in exits if rest.endswith(w)), None)
@@ -61,24 +68,85 @@ def match_exit_words(text, words, keywords=()):
             if not word:
                 break
         rest = rest[: -len(word)]
-    if not found:
-        return None
+    return found, rest
+
+
+def _names(keywords):
     names = {k for k in map(_plain, keywords) if k}
-    names |= {k[i:] for k in names for i in range(len(k) - 1)}  # 小七 for 你好小七
+    return names | {k[i:] for k in names for i in range(len(k) - 1)}  # 小七 for 你好小七
+
+
+def _strip_leading(rest, names):
     leading = sorted(names | set(_EXIT_FILLERS), key=len, reverse=True)
     while rest:
         word = next((w for w in leading if rest.startswith(w)), None)
         if not word:
             break
         rest = rest[len(word):]
+    return rest
+
+
+def match_exit_words(text, words, keywords=()):
+    """The exit word `text` asks to end the conversation with, or None.
+
+    Only when that is all it says: "拜拜", "好的，谢谢，再见", "你好小七，拜拜".
+    In the follow-up window the wake word reaches the recognizer too, at times
+    misheard ("你好小琪", "亲"), and after a barge-in the end of "七" can come
+    along. So at most one character outside the wake words may be left over;
+    "关灯，拜拜" or "用英语怎么说再见" go to the server as usual.
+    """
+    found, rest = _strip_exit_tail(_bye(_plain(text)), _exit_list(words))
+    if not found:
+        return None
+    names = _names(keywords)
+    rest = _strip_leading(rest, names)
     name_chars = set("".join(names))
     return found if sum(ch not in name_chars for ch in rest) <= 1 else None
 
 
-def exit_word(text):
+def match_exit_intent(text, words, keywords=()):
+    """How `text` asks to end the conversation: ("now", word),
+    ("after_answer", word) or (None, None).
+
+    now: it says nothing else (match_exit_words), or a goodbye opens it and the
+    rest went to someone else ("拜拜，15加12已经27天没换水了").
+    after_answer: the server answers first, then the conversation ends instead
+    of listening again. A goodbye closing it ("关灯，拜拜"), after a wake word
+    misheard beyond repair ("你好傻次，拜拜", "再师拜拜"), or another exit word
+    opening it ("不用了，帮我把灯关掉").
+    "用英语怎么说再见" or "再见用英语怎么说" are not exits.
+    """
+    word = match_exit_words(text, words, keywords)
+    if word:
+        return "now", word
+    names = _names(keywords)
+    clauses = [c for c in _CLAUSE_BREAKS.split(str(text)) if _strip_leading(_plain(c), names)]
+    if len(clauses) > 1:
+        word = match_exit_words(clauses[0], words, keywords)
+        if word:
+            return ("now" if word in _exit_list(_GOODBYES) else "after_answer"), word
+        word = match_exit_words(clauses[-1], words, keywords)
+        if word:
+            return "after_answer", word
+    found, rest = _strip_exit_tail(_bye(_plain(text)), _exit_list(words))
+    # A misheard wake word keeps its length in characters ("你好傻次").
+    longest = max((sum(not ch.isascii() for ch in _plain(k)) for k in keywords), default=0)
+    if found and rest and len(rest) <= longest:
+        return "after_answer", found
+    return None, None
+
+
+def _exit_config():
     wakeup = APP_CONFIG.get("wakeup", {})
-    return match_exit_words(text, wakeup.get("exit_words", DEFAULT_EXIT_WORDS),
-                            wakeup.get("keywords", ()))
+    return wakeup.get("exit_words", DEFAULT_EXIT_WORDS), wakeup.get("keywords", ())
+
+
+def exit_word(text):
+    return match_exit_words(text, *_exit_config())
+
+
+def exit_intent(text):
+    return match_exit_intent(text, *_exit_config())
 
 
 class Step:
@@ -106,6 +174,8 @@ class __EventManager:
         # listening starts.
         self.keyword_at = None
         self.listen_from = None
+        # The last thing said ends the conversation once it is answered.
+        self.exit_after_answer = False
         self._background = set()
 
     @staticmethod
@@ -254,8 +324,13 @@ class __EventManager:
         """检测到静音（说话结束）"""
         self.update_step(Step.on_silence)
 
-    def on_stt(self):
-        """服务端识别出了用户说的话"""
+    def on_stt(self, exit_after_answer=False):
+        """服务端识别出了用户说的话
+
+        exit_after_answer: 话里带着告别（“关灯，拜拜”），回答完就退出唤醒，不再接着听。
+        """
+        with self.state_lock:
+            self.exit_after_answer = exit_after_answer
         self.update_step(Step.on_stt)
 
     def _on_session_done(self, future):
@@ -292,6 +367,8 @@ class __EventManager:
 
         if not self._is_current_session(session_id):
             return
+        with self.state_lock:
+            exit_after_answer, self.exit_after_answer = self.exit_after_answer, False
 
         vad = get_vad()
         codec = get_audio_codec()
@@ -321,6 +398,12 @@ class __EventManager:
             except Exception as error:
                 print(f"⚠️ 退出时通知服务端失败: {error}")
             await self._end_session(session_id, xiaozhi, speaker, reason="exit_words")
+            return
+        if trigger_step == Step.on_tts_end and exit_after_answer:
+            # The answer already said goodbye; no second goodbye.
+            print("👋 回答完了，退出唤醒")
+            await self._end_session(session_id, xiaozhi, speaker, reason="exit_after_answer",
+                                    goodbye=False)
             return
         await xiaozhi.protocol.send_abort_speaking(AbortReason.ABORT)
 
@@ -419,7 +502,8 @@ class __EventManager:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
-    async def _end_session(self, session_id, xiaozhi, speaker, reason="no_speech_timeout"):
+    async def _end_session(self, session_id, xiaozhi, speaker, reason="no_speech_timeout",
+                           goodbye=True):
         with self.state_lock:
             if session_id != self.session_id:
                 return
@@ -432,7 +516,7 @@ class __EventManager:
             # stream, so keep it paused through the goodbye and its echo.
             xiaozhi.set_device_state(DeviceState.IDLE)
             print("👋 已退出唤醒")
-            after_wakeup = APP_CONFIG["wakeup"].get("after_wakeup")
+            after_wakeup = APP_CONFIG["wakeup"].get("after_wakeup") if goodbye else None
             if callable(after_wakeup):
                 HEALTH.emit("session_exit_prompt_start", session_id=session_id)
                 try:
