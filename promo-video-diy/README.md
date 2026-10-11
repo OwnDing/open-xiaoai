@@ -4,11 +4,16 @@
 DIY 只需要一台带麦克风的音箱和一台常开的 mini PC；唤醒和语音识别在家里完成，声音不出家门，交给大模型的只有一行文字；
 它听得懂意思、能跨品牌联动、一句话就能教会家里的规矩，还能扩展摄像头去看见危险、陪孩子写作业。
 
+在线观看：[B 站《【开源】一台小主机+一个音箱，DIY全网最聪明的AI家庭管家｜米家海尔一起管，声音不出家门》](https://www.bilibili.com/video/BV1BTpL6AEPC)
+
+[![](output/cover_16x9.jpg)](https://www.bilibili.com/video/BV1BTpL6AEPC)
+
 | 文件 | 内容 |
 |---|---|
 | [`storyboard.md`](storyboard.md) | 创意、视听风格、结构、逐镜头分镜表 |
 | `output/home-brain.mp4` | 成片（1920×1080 · 24fps · 2.39:1 遮幅 · H.264 + AAC） |
 | `output/storyboard_frames.jpg` | 从成片截取的每个镜头的代表帧 |
+| `output/cover_16x9.jpg`、`output/cover_4x3.jpg` | B 站封面（16:9 主封面与 4:3 版），由 `src/cover/` 生成 |
 | `src/` | 全部源码：配音、时间线、Blender 场景、合成器、配乐与音效 |
 | `scripts/` | 渲染与成片脚本 |
 
@@ -62,6 +67,15 @@ src/blender/                 src/audio/                     src/compositor/
 .venv/bin/python src/timeline.py     # 时间线
 ./scripts/render_plates.sh           # 渲染全部 3D 底片（M5 上约 2.5 小时，可中断续渲）
 ./scripts/make_video.sh              # 配乐混音 + 合成 + 编码，输出 output/
+```
+
+B 站封面：先用 Blender 渲一张不带遮幅的全幅背景，再用 HTML 叠字截图：
+
+```sh
+B=/Applications/Blender.app/Contents/MacOS/Blender
+$B -b --factory-startup -P src/cover/render_bg.py -- --w 1920 --h 1080 --t 9.0 --lens 46 --shift -0.2 --out build/cover/bg_16x9.png
+$B -b --factory-startup -P src/cover/render_bg.py -- --w 1440 --h 1080 --t 9.0 --lens 50 --shift -0.14 --shift_y 0.1 --out build/cover/bg_4x3.png
+node src/cover/render_cover.mjs      # 文案在 src/cover/cover.html
 ```
 
 调试用：

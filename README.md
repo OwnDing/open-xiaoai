@@ -162,9 +162,15 @@
 
 一台带麦克风的普通蓝牙音箱（或 USB 麦克风 + 音箱），接在家里常开的电脑上，就是一个独立的语音终端：说“你好小七”唤醒，能力和小爱一样（中途打断和说“拜拜”结束除外），不需要刷机。它和小爱共用同一套后端，谁听到的问题就由谁回答，多台同时提问互不串话；终端在 Windows 上开机自启，断线和蓝牙断开后自动恢复。
 
-目前在 Windows 11 mini PC + 京鱼座蓝牙小黑胶上验收。这台音箱的麦克风只有 8 kHz 通话音质，近距离可用，远场一般；换 USB 会议麦克风效果更好。👉 [电脑语音终端](examples/voice-terminal/README.md) · [多终端方案与测试记录](docs/cross-platform-voice-terminal-plan.md)
+目前在 Windows 11 mini PC + 京鱼座蓝牙小黑胶上验收。这台音箱的麦克风只有 8 kHz 通话音质，近距离可用，远场一般；换 USB 会议麦克风效果更好。👉 [电脑语音终端](examples/voice-terminal/README.md) · [多终端方案与测试记录](docs/cross-platform-voice-terminal-plan.md) · [视频：一台小主机 + 一个音箱，DIY AI 家庭管家](https://www.bilibili.com/video/BV1BTpL6AEPC)
 
 ## 演示视频
+
+👉 [【开源】一台小主机+一个音箱，DIY全网最聪明的AI家庭管家｜米家海尔一起管，声音不出家门](https://www.bilibili.com/video/BV1BTpL6AEPC)
+
+[![](./promo-video-diy/output/cover_16x9.jpg)](https://www.bilibili.com/video/BV1BTpL6AEPC)
+
+不刷小爱音箱也能做：一台带麦克风的音箱当耳朵和嘴巴，一台常开的 mini PC 当大脑；唤醒和语音识别都在家里完成，交给大模型的只有一行文字。片中的摄像头识别危险、陪孩子写作业是扩展方向。这支片子同样由 AI 编写代码完成，分镜与源码见 [`promo-video-diy/`](promo-video-diy/README.md)。
 
 👉 [小爱音箱 + Hermes Agent，让真正的 AI 管家进入你家](https://www.bilibili.com/video/BV1hhao6cEfq)
 
