@@ -191,10 +191,6 @@
 
 [![](./docs/images/kws.jpg)](https://www.bilibili.com/video/BV1YfVUz5EMj)
 
-👉 [小爱音箱接入 MiGPT 演示视频](https://www.bilibili.com/video/BV1N1421y7qn)
-
-[![](./docs/images/migpt.jpg)](https://www.bilibili.com/video/BV1N1421y7qn)
-
 ## 快速开始
 
 > [!IMPORTANT]
@@ -213,7 +209,7 @@
 1. 在常开的电脑上部署小智服务端、Hermes 和 Home Assistant 👉 [Sherpa / 小智服务端](deploy/sherpa-tts/README.md) · [Hermes](deploy/hermes/README.md) · [Home Assistant](deploy/homeassistant/README.md)
 2. 把带麦克风的蓝牙音箱（或 USB 麦克风 + 音箱）接到电脑上，安装并运行语音终端 👉 [电脑语音终端](examples/voice-terminal/README.md)
 
-**更多玩法**：[自定义唤醒词](examples/kws/README.md) · [接入 MiGPT（完美版）](examples/migpt/README.md) · [接入 Gemini Live API](examples/gemini/README.md) · [多台音箱组立体声](examples/stereo/README.md)
+**更多玩法**：[自定义唤醒词](examples/kws/README.md) · [接入 Gemini Live API](examples/gemini/README.md) · [多台音箱组立体声](examples/stereo/README.md)
 
 以上皆为抛砖引玉，你也可以亲手编写自己想要的功能，未来由你定义！
 
@@ -253,8 +249,6 @@
 
 如果你不想刷机，或者不是小爱音箱 Pro，下面的项目或许对你有用：
 
-- https://github.com/idootop/mi-gpt
-- https://github.com/idootop/migpt-next
 - https://github.com/yihong0618/xiaogpt
 - https://github.com/hanxi/xiaomusic
 
@@ -279,4 +273,4 @@
 
 ## License
 
-MIT License © 2024-PRESENT [Del Wang](https://del.wang)
+[MIT License](LICENSE)
