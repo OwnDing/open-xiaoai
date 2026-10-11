@@ -232,6 +232,20 @@
 | [接入与延迟测试报告](docs/xiaoai-xiaozhi-hermes-latency-report.md) | Hermes 对各类请求的延迟影响 |
 | [多终端语音接入方案](docs/cross-platform-voice-terminal-plan.md) | 不用小爱音箱的语音终端方案与各阶段测试 |
 
+## 贡献者
+
+小七是一个人和两个 AI 编程助手一起做出来的：
+
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/OwnDing"><img src="https://github.com/OwnDing.png?size=100" width="80" alt="OwnDing"/><br/><b>OwnDing</b></a></td>
+    <td align="center"><a href="https://github.com/claude"><img src="https://github.com/claude.png?size=100" width="80" alt="Claude"/><br/><b>Claude</b></a></td>
+    <td align="center"><a href="https://github.com/codex"><img src="https://github.com/codex.png?size=100" width="80" alt="Codex"/><br/><b>Codex</b></a></td>
+  </tr>
+</table>
+
+小七基于 [idootop/open-xiaoai](https://github.com/idootop/open-xiaoai) 开发，感谢原作者 [Del Wang](https://github.com/idootop) 和上游的所有贡献者。
+
 ## 相关项目
 
 > [!TIP]
