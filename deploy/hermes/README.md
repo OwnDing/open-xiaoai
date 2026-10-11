@@ -67,6 +67,9 @@ mounted into the server by its compose file:
 
 ```yaml
       - ../open-xiaoai/deploy/hermes/xiaozhi-provider/hermes.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/hermes.py:ro
+      # Saved scene phrases (see "Saying a scene phrase" below).
+      - ../open-xiaoai/deploy/hermes/profile/mcp/home_rules/scene_run.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/scene_run.py:ro
+      - ../open-xiaoai/deploy/hermes/profile/mcp/home_rules/ha.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/ha.py:ro
 ```
 
 xiaozhi sends the dialogue as plain text, so earlier turns look like the
@@ -163,9 +166,72 @@ skill tells the model how to use them.
   …了提醒我, 每天…) to the normal path, and when the user agrees to an
   “要我保存吗？” it requires a `mcp__home_rules__` tool call, retrying once
   (logged as `确认保存后未调用规则工具`).
+- The first save call also returns `devices`, the actions worded with the
+  names Home Assistant has for the chosen entities (“打开客厅灯”, “打开餐厅灯”).
+  The model reads those back instead of its own summary, so a wrong entity is
+  heard before anything is saved.
 
-Unit tests: `cd profile/mcp && python3 -m unittest test_home_rules`. Inspect or
+Unit tests: `cd profile/mcp && python3 -m unittest test_home_rules test_scene_run`. Inspect or
 remove what was taught from the HA UI, or by voice (“现在有哪些联动”, “把……删掉”).
+
+### Saying a scene phrase: run by the provider, checked against the devices
+
+On 2026-10-11 “我回来了” was saved correctly and its test run worked, yet the
+next five times it was answered with “好，客厅灯和餐厅灯都开了” and nothing was
+switched: Home Assistant's logbook shows no call. xiaozhi forwards only the text
+of earlier turns, so the model saw “开了” answers with no tool behind them and
+copied them; the tool guard did not look, because “我回来了” has neither a
+device nor a command word, and neither has “没开呀”. Two changes make scenes
+reliable instead of hoping the model calls `home_rule_run`:
+
+- **The provider runs the phrase itself.** [`scene_run.py`](profile/mcp/home_rules/scene_run.py)
+  is mounted next to `hermes.py` together with `ha.py` (see the compose snippet
+  above). On every turn the provider reads the saved scenes from Home Assistant
+  (one template request), and when the whole utterance is a phrase — give or
+  take an address (“小琪，”), an interjection and particles (我回来啦 = 我回来了)
+  — it starts the script, waits up to `scene_verify_s` (5 s) until the devices
+  reached their new state, and speaks the result without asking the model:
+  “好，客厅灯和餐厅灯开了。”, or “客厅灯开了，但餐厅灯没有反应。”. The first word is
+  heard about 0.35 s after the request (the model path took about 3 s). When
+  the phrase is followed by more (“我回来了，把空调开到二十六度”), the scene runs
+  first and only the rest goes to Hermes, with a note that the scene is done.
+  Talking about a scene (“我回来了这个场景开哪几盏灯”, “以后我说我回来了就…”) is
+  left to the model. `home_rule_run`, which the model still uses for “试一下”
+  and phrases the provider was not sure about, runs the same code and returns
+  the sentence to say (`say`) and `not_responding`.
+- **A claim needs a tool.** Whatever the request, the provider checks each
+  sentence of the reply: one that says a device was switched (“客厅灯开了”,
+  “执行了”, “我再打开一次”) needs `ha_call_service`, a `home_rules`/`home_history`
+  tool or `cronjob_manage` in the same turn; one that states a device's state
+  (“显示是关着”, “客厅灯开着呢”) needs a Home Assistant lookup. Such a sentence
+  and everything after it are held until that tool runs (then they were its
+  lead-in and are dropped); if the turn ends first, nothing of it is spoken and
+  the request is retried once (`没有调用工具就说做了`). If the retry claims again
+  without a tool, `claim_failed_reply` is spoken instead. Advice (“记得把灯关了”),
+  offers (“要不要我帮你关”), rules read back (“以后你说……我就开灯”) and the past
+  (“刚才开了客厅灯”) are not claims. Replayed over all 1479 turns in Hermes'
+  history: 48 of the 1114 turns without a tool were held, all of them claims or
+  states said without a tool (two of them inside jokes).
+- “没开呀”, “还是没有打开” right after a reply that said it was done is handled
+  like a command that needs a switching tool (`用户说没生效，回答未重新执行`).
+
+Provider settings (LLM entry `type: hermes`; `switch_llm.py hermes` fills the
+first two from Hermes' `.env`):
+
+| key | default | |
+|---|---|---|
+| `ha_url`, `ha_token` | `HASS_URL`, `HASS_TOKEN` env | without them phrases stay with the model |
+| `scene_shortcut` | `true` | `false` leaves phrases to the model |
+| `scene_verify_s` | `5` | how long to wait for the devices |
+| `scene_replies` | see `scene_run.DEFAULT_REPLIES` | `done`, `partial`, `failed`, `ran`, `error`, `later`; placeholders `{scene}`, `{done}`, `{failed}` |
+| `claim_failed_reply` | “这次没有真正执行成功，你再说一遍吧。” | spoken when the retry still claims a switch without a tool |
+| `state_failed_reply` | “这次没查到设备现在的状态，你再问我一次吧。” | the same for a state |
+
+End to end: `bench/scene_e2e.py` replays the failing conversation on one
+connection through a xiaozhi container (switching the scene's devices back
+before each turn, restoring them at the end) and fails when the devices did not
+switch or the reply claims what did not happen. Daytime only, it switches real
+devices.
 
 ### Proactive announcements (script.xiaoqi_announce)
 

@@ -49,7 +49,8 @@ def main():
     selected = config.setdefault("selected_module", {})
 
     if args.target == "hermes":
-        api_key = read_env(args.hermes_env).get("API_SERVER_KEY")
+        env = read_env(args.hermes_env)
+        api_key = env.get("API_SERVER_KEY")
         if not api_key:
             raise SystemExit(f"API_SERVER_KEY missing in {args.hermes_env}")
         direct = llm.get(DIRECT, {})
@@ -67,6 +68,14 @@ def main():
             # Tool calls (search, Home Assistant) can take longer than chat.
             "timeout": {"connect": 3.0, "read": 90.0},
         }
+        if env.get("HASS_URL") and env.get("HASS_TOKEN"):
+            # Saved scene phrases are run by the provider itself (needs
+            # scene_run.py and ha.py mounted next to hermes.py); Hermes'
+            # own Home Assistant address works on the shared network.
+            llm[HERMES]["ha_url"] = env["HASS_URL"]
+            llm[HERMES]["ha_token"] = env["HASS_TOKEN"]
+        else:
+            print(f"HASS_URL/HASS_TOKEN missing in {args.hermes_env}: scene phrases stay with the model")
         selected["LLM"] = HERMES
     else:
         if DIRECT not in llm:

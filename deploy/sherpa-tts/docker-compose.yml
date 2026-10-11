@@ -20,6 +20,9 @@ services:
       - ./models/sherpa-onnx-sense-voice:/opt/xiaozhi-esp32-server/models/sherpa-onnx-sense-voice
       # Hermes LLM provider with the device-control tool guard (type: hermes).
       - ../open-xiaoai/deploy/hermes/xiaozhi-provider/hermes.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/hermes.py:ro
+      # It runs saved scene phrases itself with these two home_rules modules.
+      - ../open-xiaoai/deploy/hermes/profile/mcp/home_rules/scene_run.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/scene_run.py:ro
+      - ../open-xiaoai/deploy/hermes/profile/mcp/home_rules/ha.py:/opt/xiaozhi-esp32-server/core/providers/llm/hermes/ha.py:ro
     depends_on:
       sherpa-tts:
         condition: service_healthy
