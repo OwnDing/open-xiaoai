@@ -25,15 +25,38 @@ built-in tools (play_music, hass, get_weather, handle_exit_intent) and a
 cached weather report that tells the model never to look weather up. With
 Hermes that prompt conflicts with SOUL.md and made the model repeat a stale
 "城市没找到" weather error, so only its real-time facts are forwarded.
+
+Two more safeguards came from a scene that was "run" five times without ever
+switching the lights (2026-10-11: "我回来了" -> "好，客厅灯和餐厅灯都开了"):
+
+- A saved scene phrase is run here, without the model: the provider asks Home
+  Assistant for the scene list, runs the matching script, waits until its
+  devices have switched and speaks what really happened (scene_run.py).
+- Whatever the request, a sentence that says a device was switched ("开了",
+  "执行了", "我再打开一次") is held back until a tool that switches backs it
+  up; one that states a device's state needs a Home Assistant lookup. If the
+  turn ends without one, the claim is never spoken and the request is retried.
 """
 
 import json
+import os
 import re
+import time
 
 import httpx
 
 from config.logger import setup_logging
 from core.providers.llm.base import LLMProviderBase
+
+try:  # home_rules' scene_run.py and ha.py, mounted next to this file.
+    from . import ha as ha_client
+    from . import scene_run
+except ImportError:  # Loaded as a plain module (unit tests), or not mounted.
+    try:
+        import ha as ha_client
+        import scene_run
+    except ImportError:
+        ha_client = scene_run = None
 
 TAG = __name__
 logger = setup_logging()
@@ -121,11 +144,13 @@ RETRY_NOTE = (
 # a scheduled job; RETRY_NOTE would push it to run now. "几点" is a question,
 # so only concrete numbers count.
 NUMBER = r"(?:\d+|[零一二两三四五六七八九十]+)"
+# "调高一点", "亮一点", "有一点暗", "一点点" are amounts, not one o'clock.
+AMOUNT_BEFORE = r"(?<![高低亮暗大小多少快慢强弱冷热凉暖紧松近远长短深浅早晚轻重有差再些])"
 LATER_WORDS = re.compile(
     NUMBER + r"?\s*个?\s*半?\s*(?:小时|钟头|分钟)\s*(?:以?后|之后|过后)"
-    r"|" + NUMBER + r"\s*点(?:半|钟|" + NUMBER + r"分?)?"
+    r"|" + AMOUNT_BEFORE + NUMBER + r"\s*点(?![点儿])(?:半|钟|" + NUMBER + r"分?)?"
     r"|\d{1,2}\s*[:：]\s*\d{2}"
-    r"|待会儿?|等会儿?|过一会儿?|一会儿(?:以?后|再)|晚点|定时|到点"
+    r"|待会儿?|等会儿?|过一会儿?|一会儿(?:以?后|再)|晚一?点|定时|到点"
 )
 # Right after the agent confirmed a schedule ("好，十一点整关鱼缸插座"), a vague
 # 开/关 with no device and no time ("会关，现在会关", said to someone else in the
@@ -170,6 +195,75 @@ SCHEDULE_RETRY_NOTE = (
     "（action 为 create，schedule 用 in 2h 这样的时长或带日期的时间，"
     "prompt 写明调用 ha_call_service 对哪个实体做什么，deliver 为 local），不要现在就执行；"
     "用户要现在执行的，调用 ha_call_service。再根据工具结果回答。）"
+)
+
+
+# What a reply claims (see the module docstring). Tools that switch something,
+# or report the past, back up "开了"; a Home Assistant lookup backs up "开着".
+ACT_TOOLS = ("ha_call_service", "mcp__home_rules__", "mcp__home_history__", "cronjob")
+LOOK_TOOLS = ("ha_",)
+CLAIM_SUBJECT = re.compile(DEVICE_WORDS.pattern + r"|场景|两盏|几盏|全屋|所有|状态")
+DONE_VERB = re.compile(
+    r"(?:打开|关掉|关上|关闭|开启|启动|停止|暂停|切换|开|(?<!开)关|亮|灭|调好|设好)(?:好|完|上|掉|起来|成功)?了(?![吗么没嘛吧？?])"
+    r"|(?:调|设|开)到[^，,。！!？?；;]{1,8}?了(?![吗么没嘛吧？?])"
+    r"|已(?:经)?(?:帮你|给你|为你)?(?:打开|关掉|关上|关闭|开启|启动|开|关|调|设)"
+    r"|(?:打开|关闭|关掉|开启|开|关)成功|搞定"
+)
+# Command execution needs no device word: "执行了", "指令发出去了", "我再执行一次".
+EXEC_DONE = re.compile(
+    r"执行(?:好|完|成功)?了(?![吗么没嘛吧？?])|已(?:经)?执行|(?:指令|命令)[^，,。！!？?]{0,6}(?:发|送)"
+    r"|发(?:出去|过去|送)了(?![吗么没嘛吧？?])"
+)
+EXEC_PROMISE = re.compile(
+    r"(?:再|重新)(?:发|执行)(?:一次|一遍)?|重开一次|重发一次"
+    r"|我[^，,。！!？?]{0,4}?(?:再|重新)(?:打开|开|关闭|关)(?:一次|一遍)"
+)
+PROMISE_ACT = re.compile(r"我(?:先|再|马上|这就|现在|立刻|重新|来|帮你|给你|单独)+(?:打开|开|关|调|设|重开)(?!不)")
+PROMISE_LOOK = re.compile(r"我(?:先|再|来)?(?:老老实实|仔细)?地?(?:查|看|确认)(?![不了过])")
+STATE_CLAIM = re.compile(
+    r"显示|状态[^，,。！!？?]{0,6}?(?:是|为)"
+    r"|(?:现在|目前|都|确实|还(?!是))+是?(?:开|关|亮|灭)(?:着|的)?(?![心始玩会学车门系])"
+    # "客厅灯开着呢", but not "开着还是关着" or "空调开着睡觉".
+    r"|(?<!还是)(?<!或者)(?:开|关|亮|灭)着(?:呢|的|啦|哦)?(?=[，,。！!？?]|$)"
+)
+NEGATED = re.compile(r"没|未|不|别")  # in the three characters before a claim
+# Not claims: advice ("记得把灯关了", "重发一次就好"), offers ("要不要我帮你关"), a
+# rule read back ("以后你说……我就开灯", "门一开就提醒你"), the past retold
+# ("刚才开了客厅灯", "今天开了两小时", "我说现在各屋灯都是关的").
+INSTRUCTION = re.compile(r"(?:^|[，,]|记得|别忘了?|(?<![帮给为替])你|请|先|该|要)把|建议|最好|可以|需要")
+ADVICE = re.compile(r"比较好|更好|最好|为好|建议|吧$")
+# "重发一次就好" advises; "灯亮了就好" still says the light is on.
+ENOUGH = re.compile(r"就好|就行|就可以")
+OFFER = re.compile(r"要不要|要我|需要我|用不用")
+CONDITIONAL = re.compile(r"以后|的时候|每次|每当|如果|要是|一(?![次遍下])[^，,。！!？?]{1,8}?就")
+PAST = re.compile(r"刚才|刚刚|之前|上次|昨天|前天|那会儿|那时候|当时|早前|先前|我说|你说|小时|分钟|多久")
+CLAUSE_EDGE = re.compile(r"[，,。！!？?；;：:\n]")
+# A clause without these can be spoken before its sentence ends, unless it is
+# as short as "好，", which would be left dangling when the rest is a claim.
+ACTION_HINT = re.compile(r"[开关调设亮灭执发查看显状]|搞定|成功")
+MIN_EARLY_CLAUSE = 6
+CLAUSE_BREAK = re.compile(r"[，,：:、]")
+SENTENCE_BREAK = re.compile(r"[。！!？?；;\n]")
+CLAIM_RETRY_NOTE = (
+    "（系统提示：你上一次的回答说已经操作了设备，或者说马上去操作，但这一轮你没有调用任何操作设备的工具，"
+    "设备其实没有动。聊天记录里以前说的“开了”“关了”也不一定真的执行过。要操作设备，现在就调用 "
+    "ha_call_service（用户说的是已保存场景的口令，就调用 mcp__home_rules__home_rule_run）；"
+    "只是聊天或回答问题，就直接回答，不要说你操作了设备。）"
+)
+# "没开呀" right after a reply that said it was done: that reply may never have
+# reached the device. Handled like a command.
+NOT_DONE = re.compile(
+    r"(?<![开关])没有?打?(?:开|关)(?![系心始玩会学车过])|没有?(?:亮|灭|反应|动静|执行|成功|生效)|不亮|没变"
+    r"|(?<![着的])还是?(?:亮着|开着|关着|黑着|黑的)"
+)
+NOT_DONE_NOTE = (
+    "（系统提示：用户说上一次的操作没有生效，聊天记录里说的“开了”“关了”不一定真的执行过。"
+    "现在先调用 ha_get_state 查看实际状态，再调用 ha_call_service 重新执行"
+    "（说的是已保存的场景就调用 mcp__home_rules__home_rule_run），按工具结果如实回答。）"
+)
+SCENE_DONE_NOTE = (
+    "（系统提示：用户这句话开头说的是已保存场景“{scene}”的口令，系统已经执行了这个场景，"
+    "并已经告诉用户：“{said}”。不要再执行这个场景，也不要重复这句话，只回应用户后面说的部分。）"
 )
 
 
@@ -296,6 +390,53 @@ def is_state_question(text):
     )
 
 
+def _claims(pattern, text, promise=False):
+    """A match that is not negated ("不用关了", "指令没送到"), advice, an offer, a rule or the past."""
+    for found in pattern.finditer(text):
+        if NEGATED.search(text[max(0, found.start() - 3):found.start()]) or re.search(r"没|未|不", found.group()):
+            continue
+        if INSTRUCTION.search(text[max(0, found.start() - 6):found.start()]):
+            continue
+        starts = [m.end() for m in CLAUSE_EDGE.finditer(text, 0, found.start())]
+        stop = CLAUSE_EDGE.search(text, found.end())
+        clause = text[(starts[-1] if starts else 0):(stop.start() if stop else len(text))]
+        if any(p.search(clause) for p in (CONDITIONAL, ADVICE, OFFER, PAST)) or (promise and ENOUGH.search(clause)):
+            continue
+        return True
+    return False
+
+
+def claim_need(sentence, acted=False, looked=False):
+    """"act" or "look" when the sentence claims more than this turn's tools back up, else None."""
+    text = sentence.strip()
+    if acted or not text:
+        return None
+    subject = CLAIM_SUBJECT.search(text)
+    # After a lookup, "门都关好了" reports a state; "执行了" still needs a switch.
+    if _claims(EXEC_DONE, text) or (subject and not looked and _claims(DONE_VERB, text)):
+        return "act"
+    if QUESTION_END.search(text):
+        return None  # "要我再开一次吗？" offers, it claims nothing
+    if _claims(EXEC_PROMISE, text, promise=True) or (subject and _claims(PROMISE_ACT, text, promise=True)):
+        return "act"
+    if subject and not looked and (_claims(PROMISE_LOOK, text) or _claims(STATE_CLAIM, text)):
+        return "look"
+    return None
+
+
+def says_done(text):
+    """The reply said a device was switched (whether or not it was)."""
+    return any(claim_need(part) == "act" for part in re.split(r"(?<=[。！!？?；;\n])", text))
+
+
+def is_not_done_complaint(dialogue, request):
+    """"没开呀", "还是没有打开" right after a reply that said it was done."""
+    before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
+    if not before or before[-1].get("role") != "assistant":
+        return False
+    return bool(NOT_DONE.search(request) and says_done(_message_text(before[-1])))
+
+
 def _spoken(text):
     """Letters, digits and CJK only: drops punctuation, whitespace and emoji."""
     return re.sub(r"[\W_]", "", text)
@@ -330,6 +471,41 @@ def _could_become_filler(text):
     return any(_spoken(f).startswith(spoken) for f in FILLERS)
 
 
+class SceneShortcut:
+    """Saved scene phrases, run without the model (see scene_run.py)."""
+
+    RETRY_AFTER_S = 30
+
+    def __init__(self, ha, replies=None, verify_s=5.0):
+        self.ha = ha
+        self.replies = replies if isinstance(replies, dict) else {}
+        self.verify_s = verify_s
+        self._scenes, self._failed_at = {}, None
+
+    def scenes(self):
+        """Read on every turn, so a scene taught a moment ago works at once;
+        the last list while Home Assistant is unreachable."""
+        if self._failed_at is not None and time.monotonic() - self._failed_at < self.RETRY_AFTER_S:
+            return self._scenes
+        try:
+            self._scenes, self._failed_at = scene_run.list_scenes(self.ha), None
+        except Exception as e:
+            self._failed_at = time.monotonic()
+            logger.bind(tag=TAG).warning(f"读取已保存的场景失败，暂时交给模型: {e}")
+        return self._scenes
+
+    def match(self, request):
+        """(phrase, script entity_id, rest of the request) or None."""
+        scenes = self.scenes()
+        found = scene_run.match(request, scenes) if scenes else None
+        return (found[0], scenes[found[0]], found[1]) if found else None
+
+    def run(self, phrase, entity_id):
+        """(result, sentence to speak)."""
+        result = scene_run.run(self.ha, entity_id, verify_s=self.verify_s)
+        return result, scene_run.reply(phrase, result, self.replies)
+
+
 class LLMProvider(LLMProviderBase):
     def __init__(self, config):
         self.base_url = (config.get("base_url") or config.get("url") or "http://hermes:8642/v1").rstrip("/")
@@ -341,6 +517,20 @@ class LLMProvider(LLMProviderBase):
         self.slim_system_prompt = str(config.get("slim_system_prompt", True)).lower() not in ("false", "0", "no")
         self.search_filler = config.get("search_filler", "我查一下。")
         self.search_failed_reply = config.get("search_failed_reply", "这次没查到，你再问我一次吧。")
+        # Spoken when even the retry claims a switch (or a state) that no tool backs up.
+        self.claim_failed_reply = config.get("claim_failed_reply", "这次没有真正执行成功，你再说一遍吧。")
+        self.state_failed_reply = config.get("state_failed_reply", "这次没查到设备现在的状态，你再问我一次吧。")
+        self.scenes = None
+        ha_url = config.get("ha_url") or os.environ.get("HASS_URL")
+        ha_token = config.get("ha_token") or os.environ.get("HASS_TOKEN")
+        if str(config.get("scene_shortcut", True)).lower() not in ("false", "0", "no") and ha_url and ha_token:
+            if scene_run is None:
+                logger.bind(tag=TAG).warning("没有挂载 scene_run.py 和 ha.py，场景口令仍由模型执行")
+            else:
+                self.scenes = SceneShortcut(
+                    ha_client.HomeAssistant(ha_url, ha_token, timeout=5),
+                    config.get("scene_replies"), float(config.get("scene_verify_s", 5)),
+                )
         timeout = config.get("timeout") if isinstance(config.get("timeout"), dict) else {}
         self.client = httpx.Client(
             timeout=httpx.Timeout(
@@ -476,10 +666,24 @@ class LLMProvider(LLMProviderBase):
             dialogue = slimmed
         users = [m for m in dialogue if m.get("role") == "user"]
         request = _message_text(users[-1]) if users else ""
+        sent = request  # the user text Hermes gets when a note is added
+
+        found = self.scenes.match(request) if self.scenes and users else None
+        if found:
+            phrase, entity_id, rest = found
+            result, said = self.scenes.run(phrase, entity_id)
+            logger.bind(tag=TAG).info(f"场景口令“{phrase}”已直接执行: {said} {result}")
+            yield said
+            if not rest:
+                return
+            # "我回来了，把空调开到二十六度": the model handles the rest only.
+            scene_note = SCENE_DONE_NOTE.format(scene=phrase, said=said)
+            dialogue = self._with_note(dialogue, rest, scene_note)
+            request, sent = rest, f"{rest}\n{scene_note}"
 
         if self.tool_guard and is_unclear_after_schedule(dialogue, request):
             logger.bind(tag=TAG).warning(f"刚定好定时任务，这句没说设备和时间，只回答或反问: {request}")
-            dialogue = self._with_note(dialogue, request, UNCLEAR_NOTE)
+            dialogue = self._with_note(dialogue, sent, UNCLEAR_NOTE)
             required = note = reason = None
         elif self.tool_guard and confirms_rule(dialogue, request):
             required, note, reason = RULE_TOOLS, SAVE_RETRY_NOTE, "确认保存后未调用规则工具"
@@ -488,6 +692,9 @@ class LLMProvider(LLMProviderBase):
             required = note = reason = None
         elif self.tool_guard and (is_history_question(request) or is_history_follow_up(dialogue, request)):
             required, note, reason = HISTORY_TOOLS, HISTORY_RETRY_NOTE, "设备历史问题未查询"
+        elif self.tool_guard and is_not_done_complaint(dialogue, request):
+            # Looking alone is not enough: the user wants it done this time.
+            required, note, reason = ACT_TOOLS, NOT_DONE_NOTE, "用户说没生效，回答未重新执行"
         elif self.tool_guard and is_scheduled_control(request):
             # Any tool satisfies it: a time-of-day mention may still mean "now".
             required, note, reason = None, SCHEDULE_RETRY_NOTE, "定时控制请求未调用工具"
@@ -497,19 +704,21 @@ class LLMProvider(LLMProviderBase):
             required, note, reason = "ha_", STATE_RETRY_NOTE, "设备状态问题未查询"
         else:
             required = note = reason = None
+        claim = {}
         if note is None:
             state = {"spoken": False, "held": ""}
-            yield from self._clean(self._with_search_filler(self._events(dialogue), state))
+            yield from self._clean(self._with_search_filler(self._claim_checked(self._events(dialogue), claim), state))
+            if claim.get("need"):
+                logger.bind(tag=TAG).warning(f"没有调用工具就说做了，已丢弃并重试: {request} -> {claim['held'][:60]}")
+                note = CLAIM_RETRY_NOTE if claim["need"] == "act" else STATE_RETRY_NOTE
+                yield from self._final_attempt(self._with_note(dialogue, sent, note))
+                return
             if state["spoken"]:
                 return
             logger.bind(tag=TAG).warning(
                 f"只回复了“{state['held'].strip()[:20]}”没有真正查询，已重试: {request}"
             )
-            retry_state = {"spoken": False, "held": ""}
-            retry = self._with_note(dialogue, request, FILLER_RETRY_NOTE)
-            yield from self._clean(self._with_search_filler(self._events(retry), retry_state))
-            if not retry_state["spoken"] and self.search_failed_reply:
-                yield self.search_failed_reply
+            yield from self._final_attempt(self._with_note(dialogue, sent, FILLER_RETRY_NOTE), self.search_failed_reply)
             return
 
         # Hold the reply until the required tool runs (any tool for commands,
@@ -518,7 +727,7 @@ class LLMProvider(LLMProviderBase):
         state = {"used_tool": False, "held": []}
 
         def guarded():
-            for kind, value in self._events(dialogue):
+            for kind, value in self._claim_checked(self._events(dialogue), claim):
                 if kind == "tool":
                     if not state["used_tool"] and (required is None or value.startswith(required)):
                         state["used_tool"] = True
@@ -531,17 +740,88 @@ class LLMProvider(LLMProviderBase):
                     state["held"].append(value)
 
         yield from self._clean(guarded())
-        if state["used_tool"]:
+        if state["used_tool"] and not claim.get("need"):
             return
 
         held = "".join(state["held"])
-        if note in (RETRY_NOTE, SCHEDULE_RETRY_NOTE) and is_clarifying(held):
+        if not claim.get("need") and note in (RETRY_NOTE, SCHEDULE_RETRY_NOTE, NOT_DONE_NOTE) and is_clarifying(held):
             logger.bind(tag=TAG).warning(f"{reason}，但回答是反问，保留: {request} -> {held[:60]}")
             yield from self._clean(iter([held]))
             return
+        held = claim.get("held") or held
         logger.bind(tag=TAG).warning(f"{reason}，已丢弃回答并重试: {request} -> {held[:60]}")
-        retry = self._events(self._with_note(dialogue, request, note))
-        yield from self._clean(self._with_search_filler(retry, {"spoken": False, "held": ""}))
+        yield from self._final_attempt(self._with_note(dialogue, sent, note))
+
+    def _final_attempt(self, dialogue, silent_reply=None):
+        """The one retry. A claim that still has no tool behind it is not spoken either."""
+        claim, state = {}, {"spoken": False, "held": ""}
+        yield from self._clean(self._with_search_filler(self._claim_checked(self._events(dialogue), claim), state))
+        if claim.get("need"):
+            logger.bind(tag=TAG).warning(f"重试后仍没有调用工具就说做了: {claim['held'][:60]}")
+            yield self.claim_failed_reply if claim["need"] == "act" else self.state_failed_reply
+        elif not state["spoken"] and silent_reply:
+            yield silent_reply
+
+    def _claim_checked(self, events, claim):
+        """Hermes' events, minus sentences that claim more than this turn's tools did.
+
+        Text passes a sentence at a time (a clause at a time when it has no
+        device or action word). A sentence that claims a switch ("客厅灯开了",
+        "我再执行一次") or a state ("显示是关着") without a tool behind it is
+        held, together with everything after it, until such a tool runs; the
+        held text was its lead-in and is dropped. If the turn ends first,
+        claim["need"] is "act" or "look" and claim["held"] what was never spoken.
+        """
+        if not self.tool_guard:
+            yield from events
+            return
+        acted = looked = False
+        pending, held, need = "", [], None
+        for kind, value in events:
+            if kind == "tool":
+                if pending and not need:
+                    need = claim_need(pending, acted, looked)
+                    if need:
+                        held = [pending]
+                    else:
+                        yield "text", pending
+                    pending = ""
+                acted = acted or value.startswith(ACT_TOOLS)
+                looked = looked or acted or value.startswith(LOOK_TOOLS)
+                if need and (acted or (need == "look" and looked)):
+                    held, need = [], None
+                yield kind, value
+                continue
+            if need:
+                held.append(value)
+                continue
+            pending += value
+            while True:
+                end = SENTENCE_BREAK.search(pending)
+                clause = CLAUSE_BREAK.search(pending)
+                if (clause and (not end or clause.start() < end.start())
+                        and len(_spoken(pending[: clause.end()])) >= MIN_EARLY_CLAUSE
+                        and not CLAIM_SUBJECT.search(pending[: clause.end()])
+                        and not ACTION_HINT.search(pending[: clause.end()])):
+                    part, pending = pending[: clause.end()], pending[clause.end():]
+                    yield "text", part
+                    continue
+                if not end:
+                    break
+                part, pending = pending[: end.end()], pending[end.end():]
+                need = claim_need(part, acted, looked)
+                if need:
+                    held, pending = [part, pending], ""
+                    break
+                yield "text", part
+        if pending and not need:
+            need = claim_need(pending, acted, looked)
+            if need:
+                held = [pending]
+            else:
+                yield "text", pending
+        claim["need"] = need
+        claim["held"] = "".join(held) if need else ""
 
     @staticmethod
     def _with_note(dialogue, request, note):

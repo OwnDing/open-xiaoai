@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from mcp.server.mcpserver import MCPServer
 
-from . import announce, rules, scene_index
+from . import announce, rules, scene_index, scene_run
 from .ha import HAError, HomeAssistant
 
 SOUL_PATH = os.environ.get("SOUL_PATH", "/opt/data/SOUL.md")
@@ -134,9 +134,13 @@ def home_rule_save(
         if not confirmed and not (kind == "rule" and once):
             return {"ok": False, "needs_confirmation": True,
                     "summary": config["description"].removeprefix(rules.CREATED_BY),
+                    "devices": rules.readback([dump(a) for a in actions], states,
+                                              dump(trigger) if trigger else None),
                     "replaces_existing": bool(exact),
-                    "next": "Nothing saved yet. Read the summary back to the user in one sentence and ask "
-                            "whether to save; if they agree, call again with the same arguments and confirmed=true."}
+                    "next": "Nothing saved yet. Read it back to the user in one sentence, naming the devices "
+                            "exactly as `devices` names them (those are the devices that will really be "
+                            "switched), and ask whether to save; if they agree, call again with the same "
+                            "arguments and confirmed=true."}
         if not exact:
             # The agent does not see earlier tool results (xiaozhi forwards text only),
             # so after a retry it may save what is already saved under another name.
@@ -211,16 +215,28 @@ def home_rule_delete(name: str, kind: Optional[Literal["scene", "rule"]] = None)
 
 @server.tool()
 def home_rule_run(name: str) -> dict[str, Any]:
-    """Run a scene now (when the user says its phrase), or test a linkage's actions now."""
+    """Run a scene now (when the user says its phrase), or test a linkage's actions now.
+
+    For a scene, waits until its devices have switched and reports what really
+    happened: `say` is the sentence to tell the user; devices in
+    not_responding did not change, so never tell the user they did.
+    """
     try:
         item, problem = _one(name, None)
         if problem:
             return {"ok": False, "problems": [problem]}
         ha = _ha()
         if item["kind"] == "scene":
-            ha.call("script", item["id"])
-        else:
-            ha.call("automation", "trigger", {"entity_id": item["entity_id"], "skip_condition": True})
+            result = scene_run.run(ha, item["entity_id"])
+            if result["error"]:
+                return {"ok": False, "problems": [f"Home Assistant 出错：{result['error']}"]}
+            return {"ok": True, "ran": item["name"], "kind": "scene",
+                    "confirmed": [device + verb for device, verb in result["done"]],
+                    "not_responding": result["failed"],
+                    "not_checked": result["unchecked"],
+                    "continues_later": result["later"],
+                    "say": scene_run.reply(item["name"], result)}
+        ha.call("automation", "trigger", {"entity_id": item["entity_id"], "skip_condition": True})
         return {"ok": True, "ran": item["name"], "kind": item["kind"]}
     except HAError as e:
         return {"ok": False, "problems": [f"Home Assistant 出错：{e}"]}

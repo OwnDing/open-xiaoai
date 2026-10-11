@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 # Stub the xiaozhi-server modules the provider imports.
-_logger = types.SimpleNamespace(bind=lambda **_: _logger, warning=lambda message: None)
+_logger = types.SimpleNamespace(bind=lambda **_: _logger, warning=lambda message: None, info=lambda message: None)
 sys.modules.setdefault("httpx", types.SimpleNamespace(Client=lambda **_: None, Timeout=lambda **_: None))
 sys.modules.setdefault("config", types.ModuleType("config"))
 sys.modules.setdefault("config.logger", types.SimpleNamespace(setup_logging=lambda: _logger))
@@ -19,6 +19,9 @@ for name in ("core", "core.providers", "core.providers.llm"):
     sys.modules.setdefault(name, types.ModuleType(name))
 sys.modules.setdefault("core.providers.llm.base", types.SimpleNamespace(LLMProviderBase=object))
 
+# scene_run.py and ha.py are mounted next to hermes.py in the server; here they
+# come straight from home_rules.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "profile" / "mcp" / "home_rules"))
 _spec = importlib.util.spec_from_file_location("hermes_provider", Path(__file__).with_name("hermes.py"))
 hermes = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(hermes)
@@ -429,6 +432,207 @@ class ProviderTests(unittest.TestCase):
         )
         self.assertEqual((spoken, len(requests)), ("再讲一个。", 1))
         self.assertFalse(hermes.confirms_rule([user("x"), self.ASKED, user("不用了")], "不用了"))
+
+
+class ClaimTests(unittest.TestCase):
+    """A sentence that says a device was switched needs a tool that switched it."""
+
+    run_turn = ProviderTests.run_turn
+    run_dialogue = ProviderTests.run_dialogue
+
+    def test_scene_phrase_answered_without_a_tool_is_retried(self):
+        # 2026-10-11: "我回来了" answered five times from the chat, lights never switched.
+        spoken, requests = self.run_turn(
+            "小琪，我回来了。",
+            [("text", "好，客厅灯和餐厅灯都开了。")],
+            [("tool", "mcp__home_rules__home_rule_run"), ("text", "好，客厅灯和餐厅灯开了。")],
+        )
+        self.assertEqual(spoken, "好，客厅灯和餐厅灯开了。")
+        self.assertIn(hermes.CLAIM_RETRY_NOTE, requests[1])
+
+    def test_a_claim_without_a_tool_twice_is_never_spoken(self):
+        spoken, requests = self.run_turn(
+            "我回来了。",
+            [("text", "好，客厅灯和餐厅灯都开了。")],
+            [("text", "我再执行一次。"), ("text", "这次应该开了，客厅灯和餐厅灯，你看看。")],
+        )
+        self.assertEqual(spoken, hermes.LLMProvider({"api_key": "x"}).claim_failed_reply)
+        self.assertEqual(len(requests), 2)
+
+    def test_a_promise_before_the_tool_is_lead_in(self):
+        spoken, requests = self.run_turn(
+            "嗯",
+            [("text", "我再打开一次。"), ("tool", "ha_call_service"), ("text", "好了，客厅灯开了。")],
+        )
+        self.assertEqual((spoken, len(requests)), ("好了，客厅灯开了。", 1))
+
+    def test_made_up_state_needs_a_lookup(self):
+        spoken, requests = self.run_turn(
+            "嗯？",
+            [("text", "我先老老实实查一下这两盏灯到底什么状态。"), ("text", "查到了，客厅灯现在显示是关着的。")],
+            [("tool", "ha_get_state"), ("text", "客厅灯现在关着。")],
+        )
+        self.assertEqual(spoken, "客厅灯现在关着。")
+        self.assertIn(hermes.STATE_RETRY_NOTE, requests[1])
+
+    def test_a_lookup_backs_up_a_state_but_not_a_switch(self):
+        spoken, _ = self.run_turn(
+            "家里怎么样", [("tool", "ha_list_entities"), ("text", "灯都关着，门都关好了。")])
+        self.assertEqual(spoken, "灯都关着，门都关好了。")
+        spoken, requests = self.run_turn(
+            "嗯",
+            [("tool", "ha_get_state"), ("text", "确实关着，我再发一次开灯指令。"), ("text", "好了，开了。")],
+            [("tool", "ha_call_service"), ("text", "好了，客厅灯开了。")],
+        )
+        self.assertEqual(spoken, "好了，客厅灯开了。")
+        self.assertIn(hermes.CLAIM_RETRY_NOTE, requests[1])
+
+    def test_earlier_sentences_are_spoken_before_a_late_claim(self):
+        spoken, requests = self.run_turn(
+            "今天怎么样",
+            [("text", "今天天气不错，"), ("text", "适合出门。"), ("text", "客厅灯也给你开好了。")],
+            [("text", "今天天气不错，适合出门。")],
+        )
+        self.assertEqual(spoken, "今天天气不错，适合出门。今天天气不错，适合出门。")
+        self.assertEqual(len(requests), 2)
+
+    def test_chat_about_devices_is_not_a_claim(self):
+        for reply in ("空调开着睡觉容易着凉。", "鱼缸灯开太久了容易长藻，晚上记得把灯关了。",
+                      "要不要我帮你把灯关了？", "就是以后你说“我回来了”，我就打开客厅灯和餐厅灯，要我保存吗？",
+                      "刚才开了客厅灯和餐厅灯。", "灯光指令偶尔会没送到，重发一次就好。", "那说明灯是好的，是我这边指令没送到。",
+                      "你是说刚才那次灯没开，还是说不用关了？", "空调还是开着比较好。", "冰箱只能看到门开着还是关着。"):
+            spoken, requests = self.run_turn("嗯", [("text", reply)])
+            self.assertEqual((spoken, len(requests)), (reply, 1), reply)
+
+    def test_made_up_claims(self):
+        for reply in ("好，客厅灯和餐厅灯都开了。", "我再执行一次。", "这次应该开了，客厅灯和餐厅灯，你看看。",
+                      "这次两路都发出去了，你再看下客厅灯亮没亮。", "我单独再开一次餐厅灯。", "已经帮你把灯都关了。",
+                      "好了，主卧灯开到最亮了。", "餐厅灯这次也开成功了。",
+                      # 2026-10-11 test backend: the lights were off.
+                      "好，客厅灯和餐厅灯亮了就好，有什么需要我帮忙的吗？"):
+            self.assertEqual(hermes.claim_need(reply), "act", reply)
+        for reply in ("我看看是灯离线了还是状态不对。", "客厅灯状态是开，餐厅灯状态是关。",
+                      "两盏灯在系统里都显示是开。", "这次两盏灯的状态确实都是开。",
+                      # 2026-10-11 test backend: the lights were off.
+                      "好，客厅灯和餐厅灯开着呢。"):
+            self.assertEqual(hermes.claim_need(reply), "look", reply)
+            self.assertIsNone(hermes.claim_need(reply, looked=True), reply)
+        self.assertIsNone(hermes.claim_need("好，客厅灯和餐厅灯都开了。", acted=True))
+
+    def test_english_before_a_tool_is_still_dropped(self):
+        spoken, _ = self.run_turn(
+            "取消定时任务",
+            [("text", "I'll look up your scheduled tasks first."), ("tool", "cronjob_manage"),
+             ("text", "好了，那个定时任务取消了。")],
+        )
+        self.assertEqual(spoken, "好了，那个定时任务取消了。")
+
+    def test_off_without_the_tool_guard(self):
+        provider = hermes.LLMProvider({"api_key": "x", "tool_guard": False})
+        provider._events = lambda dialogue: iter([("text", "好，客厅灯和餐厅灯都开了。")])
+        self.assertEqual("".join(provider.response("s", [user("我回来了")])), "好，客厅灯和餐厅灯都开了。")
+
+    DONE = {"role": "assistant", "content": "好，客厅灯和餐厅灯都开了。"}
+
+    def test_it_did_not_work_needs_a_new_attempt(self):
+        spoken, requests = self.run_dialogue(
+            [user("我回来了"), self.DONE, user("没开呀。")],
+            [("tool", "ha_get_state"), ("text", "两盏灯现在都关着，可能是灯离线了。")],
+            [("tool", "ha_call_service"), ("text", "好了，这次两盏灯都开了。")],
+        )
+        self.assertEqual(spoken, "好了，这次两盏灯都开了。")
+        self.assertIn(hermes.NOT_DONE_NOTE, requests[1])
+
+    def test_complaints_only_count_after_a_done_claim(self):
+        for text in ("没开呀。", "还是没有打开。", "两个都没开啊。", "没亮啊没有亮啊", "可是它现在还开着啊。"):
+            self.assertTrue(hermes.is_not_done_complaint([user("我回来了"), self.DONE, user(text)], text), text)
+        chat = {"role": "assistant", "content": "今天晴天。"}
+        self.assertFalse(hermes.is_not_done_complaint([user("天气"), chat, user("没开呀")], "没开呀"))
+        for text in ("我还没吃饭。", "没关系", "那现在客厅灯是开着还是关着？", "开个是没开过的呀"):
+            self.assertFalse(hermes.is_not_done_complaint([user("我回来了"), self.DONE, user(text)], text), text)
+
+    def test_a_little_brighter_is_not_one_oclock(self):
+        for text in ("你把那个主卧灯的，你把主卧灯亮度调高一点不太暗。", "客厅灯调亮一点", "空调温度调低一点点",
+                     "灯有一点暗，开灯"):
+            self.assertFalse(hermes.is_scheduled_control(text), text)
+        for text in ("下午一点关空调", "一点钟关灯", "1点关闭书房灯", "晚上十一点关闭鱼缸灯", "晚一点关闭客厅灯"):
+            self.assertTrue(hermes.is_scheduled_control(text), text)
+
+
+class FakeScenes:
+    def __init__(self, phrases, reply="好，客厅灯和餐厅灯开了。"):
+        self.phrases, self.reply, self.ran = phrases, reply, []
+
+    def match(self, request):
+        found = hermes.scene_run.match(request, self.phrases)
+        return (found[0], self.phrases[found[0]], found[1]) if found else None
+
+    def run(self, phrase, entity_id):
+        self.ran.append(entity_id)
+        return {"done": [], "failed": [], "unchecked": 0, "later": False, "error": None}, self.reply
+
+
+class SceneShortcutTests(unittest.TestCase):
+    def provider(self, *streams):
+        provider = hermes.LLMProvider({"api_key": "x"})
+        provider.scenes = FakeScenes({"我回来了": "script.xiaoqi_scene_home"})
+        scripts, provider.requests = list(streams), []
+
+        def fake_events(dialogue):
+            provider.requests.append(dialogue[-1]["content"])
+            yield from scripts.pop(0)
+
+        provider._events = fake_events
+        return provider
+
+    def test_the_phrase_runs_without_the_model(self):
+        provider = self.provider()
+        spoken = "".join(provider.response("s", [user("小琪，我回来了。")]))
+        self.assertEqual(spoken, "好，客厅灯和餐厅灯开了。")
+        self.assertEqual((provider.scenes.ran, provider.requests), (["script.xiaoqi_scene_home"], []))
+
+    def test_the_rest_goes_to_the_model(self):
+        provider = self.provider([("tool", "ha_call_service"), ("text", "空调开到二十六度了。")])
+        spoken = "".join(provider.response("s", [user("我回来了，把空调开到二十六度。")]))
+        self.assertEqual(spoken, "好，客厅灯和餐厅灯开了。空调开到二十六度了。")
+        self.assertTrue(provider.requests[0].startswith("把空调开到二十六度。\n（系统提示：用户这句话开头说的是已保存场景“我回来了”"))
+
+    def test_the_rest_keeps_its_guard(self):
+        provider = self.provider(
+            [("text", "好，空调也开了。")],
+            [("tool", "ha_call_service"), ("text", "空调开到二十六度了。")],
+        )
+        spoken = "".join(provider.response("s", [user("我回来了，把空调开到二十六度。")]))
+        self.assertEqual(spoken, "好，客厅灯和餐厅灯开了。空调开到二十六度了。")
+        self.assertIn("已保存场景“我回来了”", provider.requests[1])
+        self.assertIn(hermes.RETRY_NOTE, provider.requests[1])
+
+    def test_teaching_a_scene_is_not_running_it(self):
+        provider = self.provider([("text", "以后你说“我回来了”，我就开客厅灯，要我保存吗？")])
+        spoken = "".join(provider.response("s", [user("以后我说我回来了，就打开客厅灯")]))
+        self.assertEqual(spoken, "以后你说“我回来了”，我就开客厅灯，要我保存吗？")
+        self.assertEqual(provider.scenes.ran, [])
+
+    def test_wired_to_home_assistant_from_the_config(self):
+        provider = hermes.LLMProvider({"api_key": "x", "ha_url": "http://ha:8123", "ha_token": "t",
+                                       "scene_replies": {"done": "{done}，欢迎回家。"}})
+        self.assertEqual(provider.scenes.ha.url, "http://ha:8123")
+        self.assertEqual(provider.scenes.replies, {"done": "{done}，欢迎回家。"})
+        self.assertIsNone(hermes.LLMProvider({"api_key": "x", "ha_url": "http://ha:8123", "ha_token": "t",
+                                              "scene_shortcut": False}).scenes)
+
+    def test_scene_list_failures_back_off(self):
+        calls = []
+
+        class DownHA:
+            def request(self, *args, **kwargs):
+                calls.append(1)
+                raise OSError("refused")
+
+        shortcut = hermes.SceneShortcut(DownHA())
+        self.assertIsNone(shortcut.match("我回来了"))
+        self.assertIsNone(shortcut.match("我回来了"))
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

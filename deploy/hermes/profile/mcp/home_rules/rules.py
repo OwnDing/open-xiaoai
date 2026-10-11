@@ -8,8 +8,11 @@ changed or deleted, so the user's own automations and scripts are never
 touched. Pure functions: callers pass in /api/states and /api/services.
 """
 
+import json
 import re
 import uuid
+
+from .scene_run import spoken_name
 
 SCENE_PREFIX = "xiaoqi_scene_"
 RULE_PREFIX = "xiaoqi_rule_"
@@ -313,6 +316,46 @@ def build(kind, name, actions, states, services, trigger=None, conditions=None,
                 "sequence": ha_actions}, []
     return {"alias": RULE_ALIAS + name, "description": description, "mode": "single",
             "triggers": [ha_trigger], "conditions": ha_conditions, "actions": ha_actions}, []
+
+
+# How the read-back words an action ("打开客厅灯"); other services keep their name.
+SERVICE_WORDS = {
+    "turn_on": "打开", "turn_off": "关闭", "toggle": "切换", "open_cover": "打开", "close_cover": "关上",
+    "stop_cover": "停下", "set_temperature": "调温度", "set_hvac_mode": "切换模式", "set_percentage": "调档位",
+    "select_option": "选择", "set_value": "设定", "press": "按下", "start": "启动", "pause": "暂停",
+    "return_to_base": "回充",
+}
+
+
+def readback(actions, states, trigger=None):
+    """The rule's devices as Home Assistant names them, to read back before saving.
+
+    The model writes `summary` itself, so it can say "客厅灯" while the action
+    switches another entity; these lines come from the entities being saved.
+    """
+    by_id = {s["entity_id"]: s for s in states}
+
+    def name(entity_id):
+        state = by_id.get(entity_id or "")
+        return spoken_name(state) if state else str(entity_id)
+
+    lines = []
+    if trigger and trigger.get("entity_id"):
+        lines.append(f"触发：{name(trigger['entity_id'])}")
+    for a in actions:
+        kind = a.get("type")
+        if kind == "device":
+            service = str(a.get("service") or "")
+            data = a.get("data")
+            lines.append(f"{SERVICE_WORDS.get(service, service)}{name(a.get('entity_id'))}"
+                         + (f"（{json.dumps(data, ensure_ascii=False)}）" if data else ""))
+        elif kind == "announce":
+            lines.append(f"播报“{a.get('message', '')}”")
+        elif kind == "scene":
+            lines.append(f"执行场景“{a.get('scene', '')}”")
+        elif kind == "delay":
+            lines.append(f"等{a.get('seconds')}秒")
+    return lines
 
 
 BEHAVIOUR_KEYS = {"scene": ("sequence",), "rule": ("triggers", "conditions", "actions")}
