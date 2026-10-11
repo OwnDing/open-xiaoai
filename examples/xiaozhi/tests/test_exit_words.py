@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import xiaozhi.event as event_module
-from xiaozhi.event import DEFAULT_EXIT_WORDS, Step, match_exit_words
+from xiaozhi.event import DEFAULT_EXIT_WORDS, Step, match_exit_intent, match_exit_words
 from xiaozhi.services.audio.kws import _KWS
 from xiaozhi.services.protocols.typing import DeviceState
 
@@ -14,6 +14,10 @@ KEYWORDS = ["天猫精灵", "小度小度", "豆包豆包", "你好小七", "你
 
 def matches(text):
     return match_exit_words(text, DEFAULT_EXIT_WORDS, KEYWORDS)
+
+
+def intent(text, keywords=("你好小七",)):
+    return match_exit_intent(text, DEFAULT_EXIT_WORDS, keywords)[0]
 
 
 class MatchExitWordsTests(unittest.TestCase):
@@ -31,6 +35,16 @@ class MatchExitWordsTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNotNone(matches(text))
 
+    def test_goodbye_as_the_recognizer_spells_it(self):
+        # All heard live (2026-10-09..11).
+        for text in ["拜 by", "拜e by", "拜e bye", "拜 bye", "拜 by拜 by", "Goode bye", "Bye bye",
+                     "不用啊, goodbye", "没事，小七拜拜"]:
+            with self.subTest(text=text):
+                self.assertIsNotNone(matches(text))
+        for text in ["baby", "nearby", "参拜", "没事", "不用"]:
+            with self.subTest(text=text):
+                self.assertIsNone(matches(text))
+
     def test_a_request_or_question_is_not_an_exit(self):
         for text in ["关灯，拜拜", "用英语怎么说再见", "再见用英语怎么说", "跟奶奶说拜拜", "晚安",
                      "我要出门了拜拜", "明天天气怎么样", "你好小七", "谢谢", "好的", "", "。",
@@ -38,12 +52,39 @@ class MatchExitWordsTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(matches(text))
 
+    def test_a_goodbye_opening_the_utterance_ends_it_at_once(self):
+        # The rest was said to someone else in the room, or the TV.
+        for text in ["拜拜，15加12已经27天没换水了", "拜拜，可有虫子我怕呀拜拜",
+                     "小气拜拜，万事啊，你买粉给我们都", "你好小七，再见，我去做饭了", "拜拜"]:
+            with self.subTest(text=text):
+                self.assertEqual(intent(text), "now")
+
+    def test_more_than_a_goodbye_is_answered_first(self):
+        # A goodbye at the end, after a wake word misheard beyond repair, or
+        # another exit word opening a request.
+        for text in ["关灯，拜拜", "你好傻次，拜拜", "再师拜拜", "没什小心拜拜", "唔一下先拜拜",
+                     "不用了，帮我把灯关掉", "不用了，我要拆快递的", "帮我查下明天天气，谢谢，拜拜"]:
+            with self.subTest(text=text):
+                self.assertEqual(intent(text), "after_answer")
+
+    def test_a_goodbye_inside_a_sentence_is_not_an_exit(self):
+        for text in ["用英语怎么说再见", "再见用英语怎么说", "再见面的时候怎么说", "明天天气怎么样",
+                     "待会去吃鸡了，还没回来，拜拜，等他吃饭，我点外卖", "这个可以的，你好，小七",
+                     "我在看电视呢，拜拜就是再见的意思吗", "晚安", "你好小七", "", "。"]:
+            with self.subTest(text=text):
+                self.assertIsNone(intent(text))
+
+    def test_a_latin_wake_word_allows_no_misheard_prefix(self):
+        self.assertIsNone(intent("用英语怎么说再见", KEYWORDS + ["hello there friend"]))
+        self.assertEqual(intent("再师拜拜", ["hey siri"]), None)
+
     def test_words_come_from_the_config(self):
         self.assertIsNone(match_exit_words("拜拜", []))
         self.assertEqual(match_exit_words("先这样吧", ["先这样"]), "先这样")
         with patch.dict(event_module.APP_CONFIG["wakeup"], {"exit_words": ["回见"]}):
             self.assertEqual(event_module.exit_word("回见"), "回见")
             self.assertIsNone(event_module.exit_word("拜拜"))
+            self.assertEqual(event_module.exit_intent("关灯，回见"), ("after_answer", "回见"))
 
 
 class ExitWordsSessionTests(unittest.IsolatedAsyncioTestCase):
@@ -107,6 +148,31 @@ class ExitWordsSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls, ["goodbye"])
         self.assertEqual(self.manager.current_step, Step.idle)
 
+    async def test_ends_after_the_answer_without_a_second_goodbye(self):
+        self.manager.on_stt(exit_after_answer=True)
+        self.manager.current_step = Step.on_tts_start
+        self.manager.on_tts_end("reply")
+        await asyncio.wait_for(self.ended.wait(), 1)
+        self.assertEqual(self.calls, [])
+        self.vad.resume.assert_not_called()
+        self.assertEqual(self.manager.current_step, Step.idle)
+        self.assertFalse(self.kws.paused)
+        self.assertFalse(self.manager.exit_after_answer)
+        self.health.emit.assert_any_call("session_exit_start", session_id=self.manager.session_id,
+                                         reason="exit_after_answer")
+
+    async def test_a_new_wake_forgets_the_pending_exit(self):
+        self.manager.on_stt(exit_after_answer=True)
+        with patch.dict(event_module.APP_CONFIG["wakeup"], {"timeout": 5}):
+            self.manager.on_wakeup()
+            for _ in range(20):
+                if self.vad.resume.called:
+                    break
+                await asyncio.sleep(0.01)
+        self.vad.resume.assert_called_with("speech")
+        self.assertFalse(self.manager.exit_after_answer)
+        self.assertNotEqual(self.manager.current_step, Step.idle)
+
     async def test_ignored_outside_a_conversation(self):
         self.manager.current_step = Step.idle
         with patch.object(self.manager, "start_session") as start:
@@ -139,9 +205,24 @@ class ExitWordsSttTests(unittest.IsolatedAsyncioTestCase):
             events.on_tts_end.assert_not_called()
 
             xiaozhi._handle_stt_message({"text": "明天天气怎么样"})
-            events.on_stt.assert_called_once_with()
+            events.on_stt.assert_called_once_with(exit_after_answer=False)
             await xiaozhi._handle_tts_message({"state": "start", "session_id": "s"})
         xiaozhi.native_tts.start.assert_awaited_once()
+
+    async def test_a_request_with_a_goodbye_is_answered(self):
+        from xiaozhi.xiaozhi import XiaoZhi
+
+        xiaozhi = XiaoZhi.__new__(XiaoZhi)
+        xiaozhi._tts_gate = True
+        xiaozhi.schedule = Mock()
+        with (
+            patch.dict(event_module.APP_CONFIG["wakeup"], {"keywords": ["你好小七"]}),
+            patch("xiaozhi.xiaozhi.EventManager") as events,
+        ):
+            xiaozhi._handle_stt_message({"text": "关灯，拜拜"})
+        events.on_exit_words.assert_not_called()
+        events.on_stt.assert_called_once_with(exit_after_answer=True)
+        self.assertFalse(xiaozhi._tts_gate)
 
 
 if __name__ == "__main__":
