@@ -635,5 +635,84 @@ class SceneShortcutTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+class FakeBridge:
+    """The bridge's /music/command: replies by text; raises when down."""
+
+    def __init__(self, replies=None, down=False):
+        self.replies = replies or {}
+        self.down = down
+        self.posts = []
+
+    def post(self, url, json=None, timeout=None):
+        self.posts.append((url, json["text"]))
+        if self.down:
+            raise OSError("connection refused")
+        data = self.replies.get(json["text"], {"handled": False, "say": "", "end": False})
+        return types.SimpleNamespace(raise_for_status=lambda: None, json=lambda: data)
+
+
+class MusicShortcutTests(unittest.TestCase):
+    def provider(self, bridge, *streams):
+        provider = hermes.LLMProvider({"api_key": "x"})
+        provider.music = hermes.MusicShortcut("http://bridge:4400/", bridge)
+        scripts, provider.requests = list(streams), []
+
+        def fake_events(dialogue):
+            provider.requests.append(dialogue[-1]["content"])
+            yield from scripts.pop(0)
+
+        provider._events = fake_events
+        return provider
+
+    def test_the_bridge_plays_without_the_model(self):
+        bridge = FakeBridge({"播放梁静茹的勇气。": {"handled": True, "say": "好的，梁静茹的勇气。", "end": True}})
+        provider = self.provider(bridge)
+        spoken = "".join(provider.response("s", [user("播放梁静茹的勇气。")]))
+        self.assertEqual(spoken, "好的，梁静茹的勇气。")
+        self.assertEqual(provider.requests, [])
+        self.assertEqual(bridge.posts, [("http://bridge:4400/music/command", "播放梁静茹的勇气。")])
+
+    def test_a_silent_answer_says_nothing(self):
+        provider = self.provider(FakeBridge({"暂停": {"handled": True, "say": "", "end": True}}))
+        self.assertEqual(list(provider.response("s", [user("暂停")])), [])
+        self.assertEqual(provider.requests, [])
+
+    def test_what_the_bridge_does_not_take_goes_to_the_model(self):
+        provider = self.provider(FakeBridge(), [("text", "放心，没问题。")])
+        self.assertEqual("".join(provider.response("s", [user("放心吧")])), "放心，没问题。")
+        self.assertEqual(len(provider.requests), 1)
+
+    def test_a_bridge_that_is_down_is_skipped(self):
+        provider = self.provider(FakeBridge(down=True), [("text", "我现在放不了。")])
+        self.assertEqual("".join(provider.response("s", [user("放首歌")])), "我现在放不了。")
+
+    def test_questions_about_the_library_reach_the_bridge(self):
+        bridge = FakeBridge({"有没有梁静茹": {"handled": True, "say": "有，梁静茹的歌有15首。", "end": False},
+                             "有周杰伦的青花瓷吗？": {"handled": True, "say": "有，周杰伦的青花瓷。", "end": False}})
+        provider = self.provider(bridge)
+        self.assertEqual("".join(provider.response("s", [user("有没有梁静茹")])), "有，梁静茹的歌有15首。")
+        self.assertEqual(provider.requests, [])
+        self.assertEqual("".join(provider.response("s", [user("有周杰伦的青花瓷吗？")])), "有，周杰伦的青花瓷。")
+
+    def test_other_requests_never_reach_the_bridge(self):
+        bridge = FakeBridge()
+        provider = self.provider(bridge, [("text", "因为阳光被散射。")])
+        "".join(provider.response("s", [user("为什么天空是蓝色的")]))
+        self.assertEqual(bridge.posts, [])
+
+    def test_after_a_scene_phrase_the_rest_may_be_music(self):
+        bridge = FakeBridge({"放首歌。": {"handled": True, "say": "好的。", "end": True}})
+        provider = self.provider(bridge)
+        provider.scenes = FakeScenes({"我回来了": "script.xiaoqi_scene_home"})
+        spoken = "".join(provider.response("s", [user("我回来了，放首歌。")]))
+        self.assertEqual(spoken, "好，客厅灯和餐厅灯开了。好的。")
+        self.assertEqual(provider.requests, [])
+
+    def test_wired_from_the_config(self):
+        provider = hermes.LLMProvider({"api_key": "x", "music_url": "http://host.docker.internal:4400"})
+        self.assertEqual(provider.music.url, "http://host.docker.internal:4400")
+        self.assertIsNone(hermes.LLMProvider({"api_key": "x"}).music)
+
+
 if __name__ == "__main__":
     unittest.main()

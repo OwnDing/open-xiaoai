@@ -36,6 +36,9 @@ def main():
     parser.add_argument("--config", default="/xiaozhi-data/.config.yaml")
     parser.add_argument("--hermes-env", default="/hermes/.env")
     parser.add_argument("--hermes-url", default="http://hermes:8642/v1")
+    # The open-xiaoai bridge's music player (examples/xiaozhi, music.http_port);
+    # "" leaves music requests to the model.
+    parser.add_argument("--music-url", default="http://host.docker.internal:4400")
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -76,6 +79,9 @@ def main():
             llm[HERMES]["ha_token"] = env["HASS_TOKEN"]
         else:
             print(f"HASS_URL/HASS_TOKEN missing in {args.hermes_env}: scene phrases stay with the model")
+        if args.music_url:
+            # "播放……", "暂停", "下一首" go to the bridge's player first.
+            llm[HERMES]["music_url"] = args.music_url
         selected["LLM"] = HERMES
     else:
         if DIRECT not in llm:

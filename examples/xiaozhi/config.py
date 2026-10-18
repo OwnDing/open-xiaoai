@@ -124,6 +124,29 @@ APP_CONFIG = {
             "output_gain": 64,
         },
     },
+    "music": {
+        # 小七放本地音乐：“播放梁静茹的勇气”“放首歌”“暂停”“下一首”“继续播放”“这是什么歌”。
+        # 音乐目录挂载到容器里的 library（见 deploy/xiaozhi/docker-compose.yml）。
+        # 音箱用自带播放器从桥接拉歌；只在 OH2P 上验证过。
+        "enabled": False,
+        "library": "/music",
+        # 音箱从这个端口拉歌，xiaozhi 的 provider 和 Hermes 也从这里点歌
+        "http_port": 4400,
+        # 音箱访问桥接的地址，如 "http://192.168.5.10:4400"；留空则用音箱连桥接时的地址
+        "base_url": "",
+        # 放歌时喊“你好小七”，音乐降低多少分贝，对话结束再恢复；小七的声音不受影响
+        "duck_db": 20,
+        # 音乐比小七的声音低多少分贝（0 为一样响）
+        "music_db": 0,
+        # 能放的格式，同一首歌有多个文件时按这个顺序挑（音箱放不了 wma）
+        "formats": ["mp3", "flac", "wav", "m4a"],
+        # 不收进曲库的文件夹
+        "exclude_dirs": ["Podcasts", "Lyrics", "Images", "Album Artwork"],
+        # 同一位歌手的别名，例如 {"田馥甄": ["Hebe"]}
+        "aliases": {},
+        # 小七的回答，可以改；留空则不说话（例如 "stop": ""）
+        "replies": {},
+    },
     "tts_output": {
         # 可选："sherpa"（服务端音频流）或 "native_xiaomi"（音箱原生音色）
         # Docker 部署可通过 XIAOZHI_TTS_OUTPUT_MODE 环境变量覆盖。

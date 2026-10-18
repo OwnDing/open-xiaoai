@@ -57,3 +57,11 @@ def set_speech_frames(speech_frames: Any):
 
 def get_speech_frames() -> Any:
     return GLOBAL_STATES.get("speech_frames")
+
+
+def set_music(music: Any):
+    GLOBAL_STATES["music"] = music
+
+
+def get_music() -> Any:
+    return GLOBAL_STATES.get("music")

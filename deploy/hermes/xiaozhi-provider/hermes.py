@@ -36,6 +36,12 @@ switching the lights (2026-10-11: "我回来了" -> "好，客厅灯和餐厅灯
   "执行了", "我再打开一次") is held back until a tool that switches backs it
   up; one that states a device's state needs a Home Assistant lookup. If the
   turn ends without one, the claim is never spoken and the request is retried.
+
+Music requests ("播放梁静茹的勇气", "放首歌", "暂停", "下一首") go to the
+open-xiaoai bridge's player (`music_url`) before the model sees them, so
+Hermes never tries to play music through Home Assistant. The bridge only
+takes plain music phrasing and answers in a few words; everything else goes
+on to Hermes as before.
 """
 
 import json
@@ -471,6 +477,39 @@ def _could_become_filler(text):
     return any(_spoken(f).startswith(spoken) for f in FILLERS)
 
 
+# Words a music request has; only those texts are shown to the bridge.
+MUSIC_HINT = re.compile(
+    r"播|放|听|唱|歌|曲|音乐|暂停|停|下一首|上一首|换|切歌|继续|接着|循环|随机|关掉|关了|关闭"
+    r"|专辑|有没有|几首|多少首|有.{1,16}吗"
+)
+
+
+class MusicShortcut:
+    """Music requests, handled by the bridge's player (open-xiaoai examples/xiaozhi,
+    xiaozhi/services/music): it plays the local library on the speaker."""
+
+    def __init__(self, url, client, timeout=12.0):
+        self.url = url.rstrip("/")
+        self.client = client
+        # Starting a song asks the speaker a couple of things over WiFi.
+        self.timeout = timeout
+
+    def handle(self, request):
+        """What to say when the bridge took the request ("" for nothing), else None."""
+        if not MUSIC_HINT.search(request):
+            return None
+        try:
+            resp = self.client.post(f"{self.url}/music/command", json={"text": request}, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            logger.bind(tag=TAG).warning(f"音乐请求没有送到桥接，交给模型: {e}")
+            return None
+        if not data.get("handled"):
+            return None
+        return str(data.get("say") or "")
+
+
 class SceneShortcut:
     """Saved scene phrases, run without the model (see scene_run.py)."""
 
@@ -540,6 +579,8 @@ class LLMProvider(LLMProviderBase):
                 pool=timeout.get("pool", 5.0),
             )
         )
+        music_url = config.get("music_url")
+        self.music = MusicShortcut(music_url, self.client) if music_url else None
 
     def _events(self, dialogue):
         """Yield ("tool", name) and ("text", chunk) from Hermes' SSE stream."""
@@ -680,6 +721,13 @@ class LLMProvider(LLMProviderBase):
             scene_note = SCENE_DONE_NOTE.format(scene=phrase, said=said)
             dialogue = self._with_note(dialogue, rest, scene_note)
             request, sent = rest, f"{rest}\n{scene_note}"
+
+        said = self.music.handle(request) if self.music and users else None
+        if said is not None:
+            logger.bind(tag=TAG).info(f"音乐请求已由桥接处理: {request} -> {said!r}")
+            if said:
+                yield said
+            return
 
         if self.tool_guard and is_unclear_after_schedule(dialogue, request):
             logger.bind(tag=TAG).warning(f"刚定好定时任务，这句没说设备和时间，只回答或反问: {request}")
