@@ -8,6 +8,7 @@ from config import APP_CONFIG
 from xiaozhi.ref import (
     get_audio_codec,
     get_kws,
+    get_music,
     get_speaker,
     get_vad,
     get_xiaoai,
@@ -176,6 +177,9 @@ class __EventManager:
         self.listen_from = None
         # The last thing said ends the conversation once it is answered.
         self.exit_after_answer = False
+        # A music request ("播放……", "下一首") was handled: once its short
+        # answer is spoken, the conversation ends and the music comes back.
+        self.end_after_reply = False
         self._background = set()
 
     @staticmethod
@@ -333,6 +337,15 @@ class __EventManager:
             self.exit_after_answer = exit_after_answer
         self.update_step(Step.on_stt)
 
+    def request_end_after_reply(self):
+        """The current request was for the music; end the conversation once it is answered."""
+        with self.state_lock:
+            self.end_after_reply = True
+
+    def session_active(self):
+        """A conversation with 小七 is going on (not idle, not handed to 小爱同学)."""
+        return self.current_step not in (Step.idle, Step.on_interrupt)
+
     def _on_session_done(self, future):
         with self.state_lock:
             if self.session_future is future:
@@ -369,6 +382,10 @@ class __EventManager:
             return
         with self.state_lock:
             exit_after_answer, self.exit_after_answer = self.exit_after_answer, False
+            # Only the answer to the music request itself ends the conversation;
+            # a new wake or barge-in starts over.
+            end_after_reply, self.end_after_reply = self.end_after_reply, False
+        exit_after_answer = exit_after_answer or (end_after_reply and trigger_step == Step.on_tts_end)
 
         vad = get_vad()
         codec = get_audio_codec()
@@ -537,8 +554,32 @@ class __EventManager:
             # Nested pauses keep an interrupted exit from unpausing a new wake.
             kws.resume(reason="session_exit")
             HEALTH.emit("session_exit_end", session_id=session_id, kws_paused=kws.paused)
+            self._in_background(self._music("on_session_end"))
+
+    def _in_background(self, coro):
+        task = asyncio.ensure_future(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    @staticmethod
+    async def _music(event):
+        """Tell the music player (if any) that 小七 woke up or went back to sleep."""
+        music = get_music()
+        if not music:
+            return
+        try:
+            await getattr(music, event)()
+        except Exception as error:
+            print(f"⚠️ 调整音乐音量失败: {error}")
 
     async def wakeup(self, text, source):
+        if source == "kws":
+            # Music down before the wake prompt; it comes back when the
+            # conversation ends. Never hold up the wake for it.
+            try:
+                await asyncio.wait_for(asyncio.shield(self._music("on_wake")), 1.5)
+            except asyncio.TimeoutError:
+                pass
         before_wakeup = APP_CONFIG["wakeup"]["before_wakeup"]
         get_kws().pause()  # 暂停 KWS 检测
         try:

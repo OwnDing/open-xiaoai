@@ -9,6 +9,7 @@ from xiaozhi.event import EventManager, exit_intent
 from xiaozhi.ref import set_xiaozhi
 from xiaozhi.services.audio.kws import KWS
 from xiaozhi.services.audio.vad import VAD
+from xiaozhi.services.music import start_music
 from xiaozhi.services.native_tts import (
     NativeTTSSettings,
     NativeXiaomiTTS,
@@ -119,6 +120,14 @@ class XiaoZhi:
 
         VAD.start()
         KWS.start()
+
+        if get_env("CLI"):
+            # 小七放本地音乐（见 config.py 的 music）
+            start_music(
+                APP_CONFIG.get("music"), self.loop, XiaoAI.run_shell,
+                EventManager.session_active, EventManager.request_end_after_reply,
+                APP_CONFIG.get("wakeup", {}).get("keywords", ()),
+            )
 
         # 启动 GUI
         self._initialize_display()

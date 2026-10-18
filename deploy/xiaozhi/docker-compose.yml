@@ -9,6 +9,8 @@ services:
       XIAOZHI_TTS_OUTPUT_MODE: ${XIAOZHI_TTS_OUTPUT_MODE:-sherpa}
     ports:
       - "4399:4399"
+      # 小七的音乐：音箱从这里拉歌，provider 和 Hermes 从这里点歌（config.py 的 music.http_port）
+      - "4400:4400"
     volumes:
       - audio-health:/app/logs
       - ../../examples/xiaozhi/config.py:/app/config.py
@@ -24,6 +26,10 @@ services:
       - ../../examples/xiaozhi/xiaozhi/services/audio/stream.py:/app/xiaozhi/services/audio/stream.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/audio/aec.py:/app/xiaozhi/services/audio/aec.py:ro
       - ../../examples/xiaozhi/xiaozhi/services/protocols/websocket_protocol.py:/app/xiaozhi/services/protocols/websocket_protocol.py:ro
+      - ../../examples/xiaozhi/xiaozhi/ref.py:/app/xiaozhi/ref.py:ro
+      - ../../examples/xiaozhi/xiaozhi/services/music:/app/xiaozhi/services/music:ro
+      # 本地音乐目录：在 .env 里设 XIAOQI_MUSIC_DIR（如 C:\Users\me\Music），只读挂载
+      - ${XIAOQI_MUSIC_DIR:-./music}:/music:ro
 
 volumes:
   audio-health:

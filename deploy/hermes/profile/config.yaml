@@ -77,6 +77,19 @@ mcp_servers:
     tools:
       resources: false
       prompts: false
+  # The household's music library, played on the living-room speaker by the
+  # open-xiaoai bridge (see mcp/xiaoqi_music). Plain requests ("播放……",
+  # "暂停") are handled before the model; these tools cover vague requests
+  # and scheduled music.
+  xiaoqi_music:
+    command: /opt/hermes/.venv/bin/python
+    args: ["-m", "xiaoqi_music.server"]
+    cwd: /opt/data/mcp
+    env:
+      MUSIC_URL: "http://host.docker.internal:4400"
+    tools:
+      resources: false
+      prompts: false
 
 memory:
   memory_enabled: true
