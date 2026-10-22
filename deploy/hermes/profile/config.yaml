@@ -60,7 +60,7 @@ mcp_servers:
     env:
       HASS_URL: "${HASS_URL}"
       HASS_TOKEN: "${HASS_TOKEN}"
-    # No generic resource/prompt helper tools: the server only offers its four tools.
+    # No generic resource/prompt helper tools: the server only offers its five tools.
     tools:
       resources: false
       prompts: false

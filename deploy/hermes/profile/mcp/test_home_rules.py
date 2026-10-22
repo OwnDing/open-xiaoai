@@ -8,7 +8,7 @@ import unittest
 import os
 import tempfile
 
-from home_rules import announce, rules, scene_index
+from home_rules import announce, pending, rules, scene_index
 
 
 def state(entity_id, value="off", **attrs):
@@ -262,6 +262,67 @@ class SceneIndexTests(unittest.TestCase):
             self.assertEqual(scene_index.sync(path, [("我出门了", "关书房灯")]), "unchanged")
             self.assertEqual(scene_index.sync(path, []), "0 scene(s)")
             self.assertIn("（还没有）", open(path, encoding="utf-8").read())
+
+
+
+class PendingTests(unittest.TestCase):
+    """What home_rule_save checked, waiting for home_rule_confirm."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.now = 1000.0
+        self.store = self.at(0)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def at(self, seconds):
+        self.now = 1000.0 + seconds
+        return pending.Pending(os.path.join(self.tmp.name, "pending.json"), clock=lambda: self.now)
+
+    @staticmethod
+    def names(items):
+        return sorted(i["name"] for i in items)
+
+    def test_items_checked_together_are_confirmed_together(self):
+        self.store.record("rule", "书房有人开灯", {"summary": "有人开灯"})
+        later = self.at(20)  # another call, maybe another process: same file
+        later.record("rule", "书房没人十分钟关灯", {"summary": "没人关灯"})
+        to_save, already = later.batch()
+        self.assertEqual(self.names(to_save), ["书房有人开灯", "书房没人十分钟关灯"])
+        self.assertEqual(already, [])
+
+    def test_a_check_turned_down_earlier_is_left_out(self):
+        self.store.record("scene", "我出门了", {})
+        later = self.at(300)
+        later.record("rule", "洗衣提醒", {})
+        self.assertEqual(self.names(later.batch()[0]), ["洗衣提醒"])
+
+    def test_checking_the_same_name_again_replaces_it(self):
+        self.store.record("rule", "书房有人开灯", {"summary": "旧的"})
+        self.at(10).record("rule", " 书房有人开灯 ", {"summary": "新的"})
+        to_save, _ = self.at(15).batch()
+        self.assertEqual([i["args"]["summary"] for i in to_save], ["新的"])
+
+    def test_saved_items_are_reported_not_saved_again(self):
+        self.store.record("rule", "书房有人开灯", {})
+        self.at(5).record("rule", "书房有人开灯", {}, saved=True)
+        to_save, already = self.at(10).batch()
+        self.assertEqual((to_save, self.names(already)), ([], ["书房有人开灯"]))
+
+    def test_old_checks_expire(self):
+        self.store.record("rule", "书房有人开灯", {})
+        self.assertEqual(self.at(pending.TTL_S + 1).batch(), ([], []))
+
+    def test_names_pick_items(self):
+        self.store.record("rule", "书房有人开灯", {})
+        self.store.record("rule", "书房没人十分钟关灯", {})
+        self.assertEqual(self.names(self.store.batch(["有人开灯"])[0]), ["书房有人开灯"])
+
+    def test_unwritable_store_says_so(self):
+        store = pending.Pending(os.path.join(self.tmp.name, "missing", "pending.json"))
+        self.assertFalse(store.record("rule", "x", {}))
+        self.assertEqual(store.batch(), ([], []))
 
 
 if __name__ == "__main__":

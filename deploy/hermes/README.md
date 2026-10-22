@@ -136,9 +136,9 @@ Nothing is preset: the user teaches scenes (“以后我说‘我回来了’，
 linkages (“洗衣机洗完了提醒我”, “主卧开关双击就关书房灯”, “阳台漏水马上告诉我”) by voice.
 [`profile/mcp/home_rules`](profile/mcp/home_rules) is a stdio MCP server that Hermes
 starts from `config.yaml` (`mcp_servers.home_rules`; only `HASS_URL`/`HASS_TOKEN`
-reach it, and the generic resource/prompt helper tools are off). It offers four
-tools, `mcp__home_rules__home_rule_save`, `home_rules_list`, `home_rule_delete`
-and `home_rule_run`; the [`home-rules`](profile/skills/home/home-rules/SKILL.md)
+reach it, and the generic resource/prompt helper tools are off). It offers five
+tools, `mcp__home_rules__home_rule_save`, `home_rule_confirm`, `home_rules_list`,
+`home_rule_delete` and `home_rule_run`; the [`home-rules`](profile/skills/home/home-rules/SKILL.md)
 skill tells the model how to use them.
 
 - Scenes become HA scripts (`script.xiaoqi_scene_*`), linkages HA automations
@@ -151,21 +151,33 @@ skill tells the model how to use them.
   are refused; a linkage that switches a medium-risk device (AC, curtains, TV)
   must also announce it; only a linkage triggered by a leak/smoke/gas sensor may
   speak in quiet hours.
-- Scenes and lasting linkages need two calls: the first returns
-  `needs_confirmation` and a summary to read back, the second
-  (`confirmed: true`, after the user agreed) saves. A one-shot linkage
-  (`once: true`, “这次洗完提醒我”) saves at once, switches itself off after
-  running and is deleted on the next listing. Saving the same behaviour under
-  another name returns `already_saved` instead of a duplicate.
+- Scenes and lasting linkages need two calls: `home_rule_save` only checks and
+  returns `needs_confirmation` and a summary to read back; after the user agreed,
+  `home_rule_confirm` (no arguments) saves what was checked. The checked items
+  wait in `/opt/data/home_rules_pending.json` (`HOME_RULES_PENDING`, 10 minutes):
+  the model does not see its earlier tool calls (xiaozhi forwards text only), and
+  rebuilding the arguments failed (2026-10-22: it checked again and said it had
+  saved). Without names, the confirmation takes the items checked within two
+  minutes of the newest one, so a request needing several linkages (有人开灯 +
+  没人十分钟关灯) is checked item by item and confirmed once, while a check the
+  user turned down earlier is left out. `home_rule_delete` likewise takes
+  several `names` in one call: a turn has `max_turns: 8` tool calls, and five
+  deletes one by one used them up before the answer. A one-shot linkage (`once: true`,
+  “这次洗完提醒我”) saves at once, switches itself off after running and is
+  deleted on the next listing. Saving the same behaviour under another name
+  returns `already_saved` instead of a duplicate.
 - Saved scene phrases are written into `SOUL.md` between `<!-- scenes:start -->`
   and `<!-- scenes:end -->` (at server start and after every scene change);
   Hermes reads SOUL.md for each new conversation, so a phrase taught once works
   in later conversations. `install.sh` resets the block, so restart Hermes after
   installing the profile.
 - The provider guard leaves teaching phrases (`RULE_WORDS`: 以后我说…, 当…的时候,
-  …了提醒我, 每天…) to the normal path, and when the user agrees to an
-  “要我保存吗？” it requires a `mcp__home_rules__` tool call, retrying once
-  (logged as `确认保存后未调用规则工具`).
+  …了提醒我, 每天…) to the normal path. When the user agrees to an “要我保存吗？”
+  it requires `home_rule_confirm` (`home_rule_delete` after “要我删掉吗？”),
+  retrying once (logged as `确认保存后未调用确认保存工具`). In a rule conversation, or
+  when a sentence names a rule, “保存好了”, “建好了” or “接着保存……” is held
+  until `home_rule_confirm` runs, like a device claim; the retry tells the model
+  to confirm, and a second unbacked claim is replaced by “这次没有保存成功，你再说一遍吧。”
 - The first save call also returns `devices`, the actions worded with the
   names Home Assistant has for the chosen entities (“打开客厅灯”, “打开餐厅灯”).
   The model reads those back instead of its own summary, so a wrong entity is

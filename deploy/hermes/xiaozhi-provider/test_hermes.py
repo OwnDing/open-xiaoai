@@ -382,7 +382,7 @@ class ProviderTests(unittest.TestCase):
         spoken, requests = self.run_dialogue(
             [user("以后阳台漏水了马上告诉我"), self.ASKED, user("好")],
             [("text", "好了，阳台一漏水我就马上告诉你。")],
-            [("tool", "mcp__home_rules__home_rule_save"), ("text", "保存好了。")],
+            [("tool", hermes.RULE_CONFIRM_TOOL), ("text", "保存好了。")],
         )
         self.assertEqual(spoken, "保存好了。")
         self.assertIn(hermes.SAVE_RETRY_NOTE, requests[1])
@@ -390,9 +390,103 @@ class ProviderTests(unittest.TestCase):
     def test_saving_on_the_first_try_is_not_retried(self):
         spoken, requests = self.run_dialogue(
             [user("以后阳台漏水了马上告诉我"), self.ASKED, user("可以。")],
-            [("tool", "mcp__home_rules__home_rule_save"), ("text", "保存好了。")],
+            [("tool", hermes.RULE_CONFIRM_TOOL), ("text", "保存好了。")],
         )
         self.assertEqual((spoken, len(requests)), ("保存好了。", 1))
+
+    def test_checking_again_is_not_saving(self):
+        # 2026-10-22: after the user agreed, home_rule_save (which only checks) ran again.
+        spoken, requests = self.run_dialogue(
+            [user("以后阳台漏水了马上告诉我"), self.ASKED, user("好的，保存吧")],
+            [("tool", "mcp__home_rules__home_rule_save"), ("text", "保存好了。")],
+            [("tool", hermes.RULE_CONFIRM_TOOL), ("text", "保存好了。")],
+        )
+        self.assertEqual(spoken, "保存好了。")
+        self.assertIn(hermes.SAVE_RETRY_NOTE, requests[1])
+
+    def test_agreeing_to_delete_needs_the_delete_tool(self):
+        asked = {"role": "assistant", "content": "要我删掉“洗衣提醒”吗？"}
+        spoken, requests = self.run_dialogue(
+            [user("把洗衣提醒删了"), asked, user("对")],
+            [("tool", hermes.RULE_CONFIRM_TOOL), ("text", "删好了。")],
+            [("tool", hermes.RULE_DELETE_TOOL), ("text", "删好了。")],
+        )
+        self.assertEqual(spoken, "删好了。")
+        self.assertIn(hermes.DELETE_RETRY_NOTE, requests[1])
+
+    def test_agreement_phrases(self):
+        dialogue = [user("x"), self.ASKED]
+        for said in ("好", "好的，保存吧", "对，保存。", "嗯嗯", "可以的", "确认保存", "好的谢谢"):
+            self.assertEqual(hermes.confirms_rule(dialogue + [user(said)], said), "save", said)
+        for said in ("不要", "不用了", "等一下", "Does.", "改成十分钟"):
+            self.assertIsNone(hermes.confirms_rule(dialogue + [user(said)], said), said)
+
+    STUDY_ASKED = {"role": "assistant", "content": "规则做成两条：有人时打开书房灯；人走开十分钟后，再把灯关掉。要我保存吗？"}
+    STUDY = [user("创建一个规则，书房有人就开灯，人走了十分钟再关灯"), STUDY_ASKED, user("Does.")]
+
+    def test_saying_the_rest_is_saved_next_is_not_saving(self):
+        # 2026-10-22: the user's "对" was heard as "Does."; the model checked one rule
+        # again and ended with "接着保存……那一条", leaving both unsaved.
+        spoken, requests = self.run_dialogue(
+            list(self.STUDY),
+            [("tool", "mcp__home_rules__home_rule_save"),
+             ("text", "好，第一条由书房人在传感器触发，打开书房灯；接着保存人走十分钟关灯那一条。")],
+            [("tool", hermes.RULE_CONFIRM_TOOL), ("text", "好，两条都保存好了。")],
+        )
+        self.assertEqual(spoken, "好，第一条由书房人在传感器触发，打开书房灯；好，两条都保存好了。")
+        self.assertIn(hermes.SAVE_CLAIM_NOTE, requests[1])
+
+    def test_narration_around_tools_after_an_unclear_answer_is_dropped(self):
+        # 2026-10-22 replay on the live system: "Does." was taken as a yes, and the
+        # steps were read out before the answer.
+        spoken, requests = self.run_dialogue(
+            list(self.STUDY),
+            [("text", "我先读取家庭规则技能，确认正确的保存方式。"), ("tool", "skill_view"), ("text", "用户已经确认，"),
+             ("tool", "mcp__home_rules__home_rule_save"), ("tool", hermes.RULE_CONFIRM_TOOL),
+             ("text", "好，已经保存了。")],
+        )
+        self.assertEqual((spoken, len(requests)), ("好，已经保存了。", 1))
+        spoken, _ = self.run_dialogue(list(self.STUDY), [("text", "你是说要保存吗？")])
+        self.assertEqual(spoken, "你是说要保存吗？")
+
+    def test_the_model_reading_its_skill_is_not_spoken(self):
+        # 2026-10-11 and 2026-10-22: the steps were read out before the read-back.
+        spoken, requests = self.run_turn(
+            "创建一个规则，阳台漏水的时候关掉书房灯",
+            [("text", "我先查看一下 home-rules 技能，按里面的步骤来创建这条联动规则。"), ("tool", "skill_view"),
+             ("tool", "mcp__home_rules__home_rule_save"), ("text", "阳台一漏水就关掉书房灯，要我保存吗？")],
+        )
+        self.assertEqual((spoken, len(requests)), ("阳台一漏水就关掉书房灯，要我保存吗？", 1))
+        for narration in ("我先读一下家庭规则技能，找保存的场景口令。", "我先读取家庭规则技能，确认正确的保存方式。",
+                          "用户已经确认，所以我先保存这条规则。"):
+            spoken, _ = self.run_turn("嗯", [("text", narration), ("text", "好的。")])
+            self.assertEqual(spoken, "好的。", narration)
+        for chat in ("我会的技能有开关灯、查天气和放音乐。", "你可以看看说明书。"):
+            spoken, _ = self.run_turn("嗯", [("text", chat)])
+            self.assertEqual(spoken, chat)
+
+    def test_silence_after_tools_is_retried_without_redoing_them(self):
+        # 2026-10-22: five deletes used up Hermes' tool calls; its summary never arrived,
+        # and the plain retry reported the rules it had just deleted as missing.
+        spoken, requests = self.run_turn(
+            "把阳台漏水那五条联动删掉",
+            [("tool", "mcp__home_rules__home_rules_list"), ("tool", hermes.RULE_DELETE_TOOL),
+             ("tool", hermes.RULE_DELETE_TOOL)],
+            [("tool", "mcp__home_rules__home_rules_list"), ("text", "好，那五条都删掉了。")],
+        )
+        self.assertEqual(spoken, "好，那五条都删掉了。")
+        self.assertIn("你上一次调用了 mcp__home_rules__home_rules_list、mcp__home_rules__home_rule_delete，", requests[1])
+        _, requests = self.run_turn("今天有什么新闻", [("text", "我查一下。")], [("text", "今天没什么大新闻。")])
+        self.assertIn(hermes.FILLER_RETRY_NOTE, requests[1])
+
+    def test_an_unbacked_save_claim_is_never_spoken(self):
+        spoken, requests = self.run_dialogue(
+            list(self.STUDY),
+            [("text", "好，两条联动都建好了，以后书房有人就开灯。")],
+            [("tool", "mcp__home_rules__home_rule_save"), ("text", "保存好了。")],
+        )
+        self.assertEqual(spoken, hermes.LLMProvider({"api_key": "x"}).save_failed_reply)
+        self.assertEqual(len(requests), 2)
 
     SCHEDULED = [user("记得今天11点钟关闭鱼缸灯"), {"role": "assistant", "content": "好，今天上午十一点整关鱼缸插座，关好我会说一声。"}]
 
@@ -518,6 +612,19 @@ class ClaimTests(unittest.TestCase):
             self.assertEqual(hermes.claim_need(reply), "look", reply)
             self.assertIsNone(hermes.claim_need(reply, looked=True), reply)
         self.assertIsNone(hermes.claim_need("好，客厅灯和餐厅灯都开了。", acted=True))
+
+    def test_rule_save_claims(self):
+        # acted: home_rule_save ran, but it only checks; home_rule_confirm saves.
+        for reply in ("保存好了。", "好，两条联动都建好了。", "已经帮你保存。", "接着保存人走十分钟关灯那一条。",
+                      "书房没人十分钟关灯那条也保存好了。", "规则创建成功。"):
+            self.assertEqual(hermes.claim_need(reply, acted=True, rule_context=True), "save", reply)
+            self.assertIsNone(hermes.claim_need(reply, acted=True, saved=True, rule_context=True), reply)
+        self.assertEqual(hermes.claim_need("这条联动保存好了。", acted=True), "save")
+        for reply in ("要我保存吗？", "还没保存。", "已保存的场景有“我回来了”。", "刚才已经保存好了。",
+                      "规则做成两条：有人时打开书房灯；", "好，我记下了。", "要我接着保存吗？"):
+            self.assertIsNone(hermes.claim_need(reply, acted=True, rule_context=True), reply)
+        # A memory saved outside a rule conversation is not a scene or linkage.
+        self.assertIsNone(hermes.claim_need("好，保存好了。", acted=True))
 
     def test_english_before_a_tool_is_still_dropped(self):
         spoken, _ = self.run_turn(
