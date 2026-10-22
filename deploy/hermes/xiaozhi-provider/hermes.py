@@ -100,6 +100,13 @@ FILLER_RETRY_NOTE = (
     "（系统提示：你上一次只说了一句“我查一下”就结束了，没有真正查询。"
     "需要实时信息就直接调用 web_search 搜索后回答；不需要搜索就直接回答。）"
 )
+# Hermes stops a turn after max_turns tool calls and its closing summary does not
+# reach the stream (2026-10-22: five rules deleted one call each, then silence).
+# The retry must not report the result of its own work as missing.
+SILENT_AFTER_TOOLS_NOTE = (
+    "（系统提示：你上一次调用了 {tools}，但没有说出回答。这些操作很可能已经完成了，不要再做一遍；"
+    "需要时用查询工具看一下现在的结果，再用一句话告诉用户做了什么。）"
+)
 # Questions about a device's *current* state must be answered from Home
 # Assistant, not from chat history or memory ("按我这边记录……").
 STATE_SUBJECTS = re.compile(DEVICE_WORDS.pattern + r"|温度|湿度|漏水|水浸|窗户|门窗")
@@ -185,15 +192,25 @@ HISTORY_FIGURES = re.compile(NUMBER + r"\s*(?:个半?|半)?\s*(?:小时|钟头|�
 QUESTION_END = re.compile(r"[？?]\s*$")
 DONE_CLAIM = re.compile(r"好了|搞定|已经|已(开|关|调|设)|(开|关|调|设)(好|了)|掉了")
 
-# After "……要我保存吗？" a "好" must reach the home_rules tool: the model has
-# answered "好了，保存好了" without saving anything.
-ASKED_TO_SAVE = re.compile(r"保存吗|要我保存|存下来吗|要不要保存|删掉吗|要我删")
-AGREEMENT = re.compile(r"^(好|好的|好啊|好吧|可以|行|行的|嗯|嗯嗯|对|对的|是|是的|没问题|确认|要|要的|保存|保存吧|存吧|删吧|删掉吧)$")
-RULE_TOOLS = "mcp__home_rules__"
+# After "……要我保存吗？" a "好" must reach the tool that really saves: the model
+# has answered "好了，保存好了" without saving anything, and (2026-10-22) has
+# called home_rule_save again, which only checks, while saying it saved.
+ASKED_TO_SAVE = re.compile(r"保存吗|要我保存|存下来吗|要不要保存")
+ASKED_TO_DELETE = re.compile(r"删掉吗|要我删|删除吗|要不要删")
+AGREEMENT = re.compile(
+    r"^(?:好的?|好啊|好吧|可以的?|可以啊|行的?|行啊|嗯+|对的?|对啊|是的?|是啊|没问题|确认|确定|要的?"
+    r"|保存吧?|保存一下|存吧|存下来|删吧|删掉吧|删了吧|谢谢你?|小七)+$"
+)
+RULE_CONFIRM_TOOL = "mcp__home_rules__home_rule_confirm"
+RULE_DELETE_TOOL = "mcp__home_rules__home_rule_delete"
 SAVE_RETRY_NOTE = (
-    "（系统提示：用户已经同意了，但你上一次没有调用 mcp__home_rules__home_rule_save"
-    "（或 home_rule_delete）就回答了，其实什么都没有保存。现在只为你上一句刚问过的那一项调用它"
-    "（保存时 confirmed 为 true），更早的已经处理过，不要再保存一次；再根据工具结果回答。）"
+    "（系统提示：用户已经同意保存了，但你上一次没有调用 mcp__home_rules__home_rule_confirm 就回答了，"
+    "其实什么都没有保存。现在调用它（不用参数），它会按原样保存刚才检查并复述过的内容，"
+    "不要再调用 home_rule_save；再根据工具结果回答。）"
+)
+DELETE_RETRY_NOTE = (
+    "（系统提示：用户已经同意删除了，但你上一次没有调用 mcp__home_rules__home_rule_delete 就回答了，"
+    "其实什么都没有删除。现在只为你上一句刚问过的那一项调用它，再根据工具结果回答。）"
 )
 SCHEDULE_RETRY_NOTE = (
     "（系统提示：这是设备控制请求，但你上一次没有调用任何工具就回答了。"
@@ -246,10 +263,32 @@ PAST = re.compile(r"刚才|刚刚|之前|上次|昨天|前天|那会儿|那时�
 CLAUSE_EDGE = re.compile(r"[，,。！!？?；;：:\n]")
 # A clause without these can be spoken before its sentence ends, unless it is
 # as short as "好，", which would be left dangling when the rest is a claim.
-ACTION_HINT = re.compile(r"[开关调设亮灭执发查看显状]|搞定|成功")
+ACTION_HINT = re.compile(r"[开关调设亮灭执发查看显状存建]|搞定|成功|添加")
 MIN_EARLY_CLAUSE = 6
+# The model's own steps, never meant for the speaker: "我先读一下家庭规则技能，找保存的场景口令。",
+# "我先查看一下 home-rules 技能……", "用户已经确认，所以我先保存这条规则。" (it talks to the user as 你).
+NARRATION = re.compile(
+    r"(?:我先|我来|我去|先)(?:读|看|查看|读取|打开|加载|翻)[^，,。！!？?]{0,8}(?:技能|skill)"
+    r"|home[-_ ]?rules|用户(?:已经|刚才|刚刚)?(?:确认|同意)了?"
+)
+NARRATION_HINT = re.compile(r"技能|skill|rules|用户", re.I)
 CLAUSE_BREAK = re.compile(r"[，,：:、]")
 SENTENCE_BREAK = re.compile(r"[。！!？?；;\n]")
+# A scene or linkage said to be saved needs home_rule_confirm: home_rule_save
+# only checks. Counted in a rule conversation, or when the sentence names one.
+RULE_SUBJECT = re.compile(r"规则|联动|场景|口令|自动化|[一两几这那每]条")
+RULE_SAVED = re.compile(
+    r"(?:保存|创建|新建|添加)(?:好|完|成功)?了(?![吗么没嘛吧？?])|(?:存|建)(?:好|完|下来|下)了(?![吗么没嘛吧？?])"
+    r"|已(?:经)?(?:帮你|给你|为你)?(?:保存|存好|存下|建好|创建|新建|添加)(?!的)|(?:保存|创建)(?:成功|完成|完毕)"
+)
+RULE_SAVE_PROMISE = re.compile(r"(?:接着|继续|再|马上|这就|现在|立刻|我来|我先|我再)(?:帮你|给你)?保存")
+# "刚才已经保存好了" retells an earlier turn; a duration ("十分钟关灯那条") does not.
+RECENT_PAST = re.compile(r"刚才|刚刚|之前|上次|昨天|前天|早就|早前|先前")
+SAVE_CLAIM_NOTE = (
+    "（系统提示：你上一次的回答说保存了（或者说接着保存），但这一轮你没有调用 "
+    "mcp__home_rules__home_rule_confirm，其实什么都没有保存。用户已经同意保存的，现在调用它（不用参数），"
+    "它会按原样保存刚才检查过的内容；用户还没同意的，先复述再问要不要保存。按工具结果如实回答。）"
+)
 CLAIM_RETRY_NOTE = (
     "（系统提示：你上一次的回答说已经操作了设备，或者说马上去操作，但这一轮你没有调用任何操作设备的工具，"
     "设备其实没有动。聊天记录里以前说的“开了”“关了”也不一定真的执行过。要操作设备，现在就调用 "
@@ -316,11 +355,19 @@ def is_control_request(text):
     return bool(DEVICE_WORDS.search(text) and COMMAND_WORDS.search(text))
 
 
-def confirms_rule(dialogue, request):
-    """The user agreed to the save/delete the assistant just asked about."""
+def asked_about_rule(dialogue):
+    """"save" or "delete" when the assistant's last reply asked whether to, else None."""
     before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
-    asked = before and before[-1].get("role") == "assistant" and ASKED_TO_SAVE.search(_message_text(before[-1]))
-    return bool(asked and AGREEMENT.match(_spoken(request)))
+    if not before or before[-1].get("role") != "assistant":
+        return None
+    asked = _message_text(before[-1])
+    return "save" if ASKED_TO_SAVE.search(asked) else "delete" if ASKED_TO_DELETE.search(asked) else None
+
+
+def confirms_rule(dialogue, request):
+    """"save" or "delete" when the user agreed to what the assistant just asked about."""
+    asked = asked_about_rule(dialogue)
+    return asked if asked and AGREEMENT.match(_spoken(request)) else None
 
 
 def is_clarifying(reply):
@@ -396,7 +443,7 @@ def is_state_question(text):
     )
 
 
-def _claims(pattern, text, promise=False):
+def _claims(pattern, text, promise=False, past=PAST):
     """A match that is not negated ("不用关了", "指令没送到"), advice, an offer, a rule or the past."""
     for found in pattern.finditer(text):
         if NEGATED.search(text[max(0, found.start() - 3):found.start()]) or re.search(r"没|未|不", found.group()):
@@ -406,16 +453,24 @@ def _claims(pattern, text, promise=False):
         starts = [m.end() for m in CLAUSE_EDGE.finditer(text, 0, found.start())]
         stop = CLAUSE_EDGE.search(text, found.end())
         clause = text[(starts[-1] if starts else 0):(stop.start() if stop else len(text))]
-        if any(p.search(clause) for p in (CONDITIONAL, ADVICE, OFFER, PAST)) or (promise and ENOUGH.search(clause)):
+        if any(p.search(clause) for p in (CONDITIONAL, ADVICE, OFFER, past)) or (promise and ENOUGH.search(clause)):
             continue
         return True
     return False
 
 
-def claim_need(sentence, acted=False, looked=False):
-    """"act" or "look" when the sentence claims more than this turn's tools back up, else None."""
+def claim_need(sentence, acted=False, looked=False, saved=False, rule_context=False):
+    """"act", "look" or "save" when the sentence claims more than this turn's tools back up, else None."""
     text = sentence.strip()
-    if acted or not text:
+    if not text:
+        return None
+    # Before `acted`: home_rule_save is a home_rules tool, but it only checks.
+    if not saved and (rule_context or RULE_SUBJECT.search(text)):
+        if _claims(RULE_SAVED, text, past=RECENT_PAST):
+            return "save"
+        if not QUESTION_END.search(text) and _claims(RULE_SAVE_PROMISE, text, promise=True, past=RECENT_PAST):
+            return "save"
+    if acted:
         return None
     subject = CLAIM_SUBJECT.search(text)
     # After a lookup, "门都关好了" reports a state; "执行了" still needs a switch.
@@ -559,6 +614,7 @@ class LLMProvider(LLMProviderBase):
         # Spoken when even the retry claims a switch (or a state) that no tool backs up.
         self.claim_failed_reply = config.get("claim_failed_reply", "这次没有真正执行成功，你再说一遍吧。")
         self.state_failed_reply = config.get("state_failed_reply", "这次没查到设备现在的状态，你再问我一次吧。")
+        self.save_failed_reply = config.get("save_failed_reply", "这次没有保存成功，你再说一遍吧。")
         self.scenes = None
         ha_url = config.get("ha_url") or os.environ.get("HASS_URL")
         ha_token = config.get("ha_token") or os.environ.get("HASS_TOKEN")
@@ -639,12 +695,14 @@ class LLMProvider(LLMProviderBase):
         """Text of one Hermes turn, speaking our own filler when a search starts.
 
         state["spoken"] tells whether anything was yielded; state["held"] keeps
-        a filler-looking opening that was never resolved (for the retry check).
+        a filler-looking opening that was never resolved (for the retry check);
+        state["tools"] lists the tools Hermes reported.
         """
         held = ""
         deciding = True
         for kind, value in events:
             if kind == "tool":
+                state.setdefault("tools", []).append(value)
                 if deciding:
                     # The model's own "我查一下…" before the tool is dropped.
                     held = ""
@@ -733,8 +791,10 @@ class LLMProvider(LLMProviderBase):
             logger.bind(tag=TAG).warning(f"刚定好定时任务，这句没说设备和时间，只回答或反问: {request}")
             dialogue = self._with_note(dialogue, sent, UNCLEAR_NOTE)
             required = note = reason = None
-        elif self.tool_guard and confirms_rule(dialogue, request):
-            required, note, reason = RULE_TOOLS, SAVE_RETRY_NOTE, "确认保存后未调用规则工具"
+        elif self.tool_guard and confirms_rule(dialogue, request) == "save":
+            required, note, reason = RULE_CONFIRM_TOOL, SAVE_RETRY_NOTE, "确认保存后未调用确认保存工具"
+        elif self.tool_guard and confirms_rule(dialogue, request) == "delete":
+            required, note, reason = RULE_DELETE_TOOL, DELETE_RETRY_NOTE, "确认删除后未调用删除工具"
         elif self.tool_guard and is_rule_request(request):
             # Teaching or managing a scene/linkage: answered normally (see RULE_WORDS).
             required = note = reason = None
@@ -752,21 +812,31 @@ class LLMProvider(LLMProviderBase):
             required, note, reason = "ha_", STATE_RETRY_NOTE, "设备状态问题未查询"
         else:
             required = note = reason = None
-        claim = {}
+        # "保存好了" needs no rule word while a scene or linkage is being taught or confirmed.
+        rule_context = bool(is_rule_request(request) or asked_about_rule(dialogue))
+        claim = {"rule_context": rule_context}
         if note is None:
-            state = {"spoken": False, "held": ""}
-            yield from self._clean(self._with_search_filler(self._claim_checked(self._events(dialogue), claim), state))
+            state = {"spoken": False, "held": "", "tools": []}
+            events = self._claim_checked(self._events(dialogue), claim)
+            if self.tool_guard and asked_about_rule(dialogue):
+                # Not a plain yes to "要我保存吗？" ("Does.", a misheard "对"): the model
+                # narrates around its tools ("我先读取家庭规则技能……", "用户已经确认，").
+                events = self._after_last_tool(events)
+            yield from self._clean(self._with_search_filler(events, state))
             if claim.get("need"):
                 logger.bind(tag=TAG).warning(f"没有调用工具就说做了，已丢弃并重试: {request} -> {claim['held'][:60]}")
-                note = CLAIM_RETRY_NOTE if claim["need"] == "act" else STATE_RETRY_NOTE
-                yield from self._final_attempt(self._with_note(dialogue, sent, note))
+                note = {"act": CLAIM_RETRY_NOTE, "save": SAVE_CLAIM_NOTE}.get(claim["need"], STATE_RETRY_NOTE)
+                yield from self._final_attempt(self._with_note(dialogue, sent, note), rule_context=rule_context)
                 return
             if state["spoken"]:
                 return
             logger.bind(tag=TAG).warning(
-                f"只回复了“{state['held'].strip()[:20]}”没有真正查询，已重试: {request}"
+                f"只回复了“{state['held'].strip()[:20]}”没有真正查询，已重试: {request} 调用过: {state['tools']}"
             )
-            yield from self._final_attempt(self._with_note(dialogue, sent, FILLER_RETRY_NOTE), self.search_failed_reply)
+            acting = [t for t in state["tools"] if t.startswith(ACT_TOOLS)]
+            retry_note = SILENT_AFTER_TOOLS_NOTE.format(tools="、".join(dict.fromkeys(acting))) if acting else FILLER_RETRY_NOTE
+            yield from self._final_attempt(self._with_note(dialogue, sent, retry_note), self.search_failed_reply,
+                                           rule_context)
             return
 
         # Hold the reply until the required tool runs (any tool for commands,
@@ -798,15 +868,29 @@ class LLMProvider(LLMProviderBase):
             return
         held = claim.get("held") or held
         logger.bind(tag=TAG).warning(f"{reason}，已丢弃回答并重试: {request} -> {held[:60]}")
-        yield from self._final_attempt(self._with_note(dialogue, sent, note))
+        yield from self._final_attempt(self._with_note(dialogue, sent, note), rule_context=rule_context)
 
-    def _final_attempt(self, dialogue, silent_reply=None):
+    @staticmethod
+    def _after_last_tool(events):
+        """Text written after the turn's last tool call (all of it when no tool runs)."""
+        held = []
+        for kind, value in events:
+            if kind == "tool":
+                held = []
+                yield kind, value
+            else:
+                held.append(value)
+        if held:
+            yield "text", "".join(held)
+
+    def _final_attempt(self, dialogue, silent_reply=None, rule_context=False):
         """The one retry. A claim that still has no tool behind it is not spoken either."""
-        claim, state = {}, {"spoken": False, "held": ""}
+        claim, state = {"rule_context": rule_context}, {"spoken": False, "held": ""}
         yield from self._clean(self._with_search_filler(self._claim_checked(self._events(dialogue), claim), state))
         if claim.get("need"):
             logger.bind(tag=TAG).warning(f"重试后仍没有调用工具就说做了: {claim['held'][:60]}")
-            yield self.claim_failed_reply if claim["need"] == "act" else self.state_failed_reply
+            yield {"act": self.claim_failed_reply, "save": self.save_failed_reply}.get(
+                claim["need"], self.state_failed_reply)
         elif not state["spoken"] and silent_reply:
             yield silent_reply
 
@@ -818,17 +902,19 @@ class LLMProvider(LLMProviderBase):
         "我再执行一次") or a state ("显示是关着") without a tool behind it is
         held, together with everything after it, until such a tool runs; the
         held text was its lead-in and is dropped. If the turn ends first,
-        claim["need"] is "act" or "look" and claim["held"] what was never spoken.
+        claim["need"] is "act", "look" or "save" and claim["held"] what was never
+        spoken. claim["rule_context"] (set by the caller) counts a bare "保存好了".
         """
         if not self.tool_guard:
             yield from events
             return
-        acted = looked = False
+        rule_context = claim.get("rule_context", False)
+        acted = looked = saved = False
         pending, held, need = "", [], None
         for kind, value in events:
             if kind == "tool":
                 if pending and not need:
-                    need = claim_need(pending, acted, looked)
+                    need = claim_need(pending, acted, looked, saved, rule_context)
                     if need:
                         held = [pending]
                     else:
@@ -836,7 +922,8 @@ class LLMProvider(LLMProviderBase):
                     pending = ""
                 acted = acted or value.startswith(ACT_TOOLS)
                 looked = looked or acted or value.startswith(LOOK_TOOLS)
-                if need and (acted or (need == "look" and looked)):
+                saved = saved or value.startswith(RULE_CONFIRM_TOOL)
+                if need and (saved if need == "save" else acted or (need == "look" and looked)):
                     held, need = [], None
                 yield kind, value
                 continue
@@ -850,20 +937,23 @@ class LLMProvider(LLMProviderBase):
                 if (clause and (not end or clause.start() < end.start())
                         and len(_spoken(pending[: clause.end()])) >= MIN_EARLY_CLAUSE
                         and not CLAIM_SUBJECT.search(pending[: clause.end()])
-                        and not ACTION_HINT.search(pending[: clause.end()])):
+                        and not ACTION_HINT.search(pending[: clause.end()])
+                        and not NARRATION_HINT.search(pending[: clause.end()])):
                     part, pending = pending[: clause.end()], pending[clause.end():]
                     yield "text", part
                     continue
                 if not end:
                     break
                 part, pending = pending[: end.end()], pending[end.end():]
-                need = claim_need(part, acted, looked)
+                if NARRATION.search(part):
+                    continue
+                need = claim_need(part, acted, looked, saved, rule_context)
                 if need:
                     held, pending = [part, pending], ""
                     break
                 yield "text", part
-        if pending and not need:
-            need = claim_need(pending, acted, looked)
+        if pending and not need and not NARRATION.search(pending):
+            need = claim_need(pending, acted, looked, saved, rule_context)
             if need:
                 held = [pending]
             else:
