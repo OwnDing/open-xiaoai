@@ -581,6 +581,24 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(spoken, "好了，客厅灯开了。")
         self.assertIn(hermes.CLAIM_RETRY_NOTE, requests[1])
 
+    def test_tv_tools_back_up_tv_claims(self):
+        spoken, requests = self.run_turn(
+            "打开电视", [("tool", "mcp__tv_control__tv_power"), ("text", "电视打开了。")])
+        self.assertEqual((spoken, len(requests)), ("电视打开了。", 1))
+        spoken, requests = self.run_turn(
+            "电视开着吗", [("tool", "mcp__tv_control__tv_status"), ("text", "电视开着，在放狂飙。")])
+        self.assertEqual((spoken, len(requests)), ("电视开着，在放狂飙。", 1))
+
+    def test_tv_requests_need_the_tv_tools(self):
+        # Home Assistant's media player cannot wake the TV, and its IR power code toggles.
+        spoken, requests = self.run_turn(
+            "把电视关了",
+            [("tool", "ha_call_service"), ("text", "电视关了。")],
+            [("tool", "mcp__tv_control__tv_power"), ("text", "电视关了。")],
+        )
+        self.assertEqual(spoken, "电视关了。")
+        self.assertIn(hermes.TV_RETRY_NOTE, requests[1])
+
     def test_earlier_sentences_are_spoken_before_a_late_claim(self):
         spoken, requests = self.run_turn(
             "今天怎么样",

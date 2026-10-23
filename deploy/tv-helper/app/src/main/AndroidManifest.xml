@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Never installed: the APK is only a container for the code, which tv-helper.sh runs as the adb
+  shell user (app_process), out of reach of TCL's install checks, autostart rules and app freezer.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application android:label="@string/app_name" />
+</manifest>
