@@ -152,6 +152,14 @@ class PowerTests(unittest.TestCase):
         self.assertEqual([c[:2] for c in tv.ha.calls], [("androidtv", "adb_command")])
         self.assertTrue(home.helper_running)
 
+    def test_on_waits_for_a_slow_wake(self):
+        # 2026-10-23 19:46: back on the network about 30 s after the IR press.
+        home = Home(on=False)
+        tv = make(home)
+        tv.reachable = lambda tries=3: home.on and tv.clock.now >= 30
+        self.assertEqual(tv.power(True)["say"], "电视打开了。")
+        self.assertEqual(len([c for c in tv.ha.calls if c[0] == "button"]), 1)
+
     def test_on_fails_when_ir_does_not_wake_it(self):
         home = Home(on=False)
         home.ir_toggle = lambda: None

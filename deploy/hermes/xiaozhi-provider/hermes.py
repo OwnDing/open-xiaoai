@@ -121,10 +121,51 @@ PREFERENCE_WORDS = re.compile(r"应该|习惯|一般|喜欢|平时|合适|最好
 # services: its media player cannot wake it and the IR power code toggles.
 TV_WORDS = re.compile(r"电视|奇异果|爱奇艺")
 TV_TOOLS = "mcp__tv_control__"
+# Follow-ups about what the TV plays name no device ("好的，暂停。", "切音量调到15。"): right
+# after TV talk they are TV requests too. 2026-10-23 both were answered "已经暂停了" and
+# "音量调到十五了" from the chat, with no tool call.
+TV_FOLLOW_UP = re.compile(
+    r"暂停|继续(?:播|放|看)|接着(?:播|放|看)|^\W*(?:好的?\W*)?继续\W*$|停止播放|下一集|上一集|第.{1,4}集"
+    r"|快进|快退|倒回|音量|静音|声音(?:大|小|调)|大点声|小点声|大声点|小声点"
+)
+NOT_TV = re.compile(r"音箱|小爱|歌|音乐")
+# Picking a show after TV talk ("看如果奔跑是我的人生", "那我看小陈梁芳", "第二个"): 2026-10-23
+# "好，我给你打开《如果奔跑是我的人生》。" came with no tool call and the TV stayed on the list.
+TV_PICK = re.compile(
+    r"^\W*(?:那|就|好的?|嗯)?\W*(?:我|给我)?(?:想|要|就)?(?:看|播放?|放)(?![看下来起样])\w"
+    r"|^\W*(?:就|要|看)?第[一二三四五六七八九十两\d]{1,2}(?:个|部)"
+)
+SHOW_TITLE = re.compile(r"《([^》]{1,30})》")
+# A reply that lists shows to choose from ("……《理想之城》，想看哪部？", "说一个我就点开").
+SHOW_CHOICE = re.compile(r"[看选播放]哪|哪[一个部]|点开")
+# What TV talk leaves in the chat: the TV or iQiyi named, a show's title, an episode.
+# Music talk names songs in 《》 too ("第一首是《如果你也听说》"), so those count only without it.
+TV_SHOW = re.compile(SHOW_TITLE.pattern + r"|第.{1,4}集")
+MUSIC_TALK = re.compile(r"歌|音乐|专辑|唱|首(?![页播])")
+# A reply that does something on the TV ("我按杨超越在电视上搜了", "我这就去电视上按她的名字搜").
+# 电视剧 is a show, not the set.
+TV_SET = re.compile(r"电视(?![剧台])|奇异果|爱奇艺")
+
+
+def _tv_claims(act):
+    done = re.compile(act + r"(?:好|完|上|起来|成功)?了(?![吗么没嘛吧？?])|开始播|已(?:经)?(?:帮你|给你|为你)?" + act)
+    promise = re.compile(r"我(?:先|再|马上|这就|现在|立刻|重新|来|去|就|帮你|给你)+[^，,。！!？?]{0,12}?" + act)
+    return done, promise
+
+
+# Not "开播了", "热播" (the show's own news).
+TV_DONE, TV_PROMISE = _tv_claims(r"(?:打开|点开|(?<![开首热直重])播放?|放|搜|换|切|暂停|继续)")
+# With only a show's title to go on, 搜 may be a web search ("我给你搜一下《喜剧之王》在哪拍的").
+SHOW_DONE, SHOW_PROMISE = _tv_claims(r"(?:打开|点开|(?<![开首热直重])播放?|放|换|切|暂停|继续)")
 TV_RETRY_NOTE = (
     "（系统提示：这是对客厅电视的请求，但你上一次没有调用电视工具就回答了。电视只能用 mcp__tv_control__ 开头的工具"
     "操作和查询（tv_power、tv_open_app、tv_play、tv_playback、tv_volume、tv_status、tv_screen、tv_click、tv_keys），"
     "不要用 ha_call_service 或红外按钮。现在调用合适的电视工具，再按工具结果回答。）"
+)
+TV_CLAIM_NOTE = (
+    "（系统提示：你上一次的回答说在电视上搜了、打开了或播了（或者说马上去做），但这一轮你没有调用电视工具，"
+    "电视其实没有动。要操作电视，现在就调用 mcp__tv_control__ 开头的工具（播片名用 tv_play，title 填片名），"
+    "按工具结果回答；只是聊天，就直接回答，不要说你操作了电视。）"
 )
 STATE_RETRY_NOTE = (
     "（系统提示：这是询问设备当前状态的问题，但你上一次没有查询就回答了。"
@@ -443,6 +484,40 @@ def is_history_follow_up(dialogue, request):
     )
 
 
+def is_tv_talk(text):
+    return bool(TV_WORDS.search(text) or (TV_SHOW.search(text) and not MUSIC_TALK.search(text)))
+
+
+def after_tv_talk(dialogue):
+    """Whether the latest of the last two exchanges' topics, TV or music, was the TV."""
+    before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
+    for message in reversed(before[-4:]):
+        text = _message_text(message)
+        if is_tv_talk(text):
+            return True
+        if MUSIC_TALK.search(text):
+            return False
+    return False
+
+
+def picks_offered_show(dialogue, request):
+    """The request names a show the last reply listed ("《七时吉祥》《理想之城》，想看哪部？")."""
+    before = [m for m in dialogue if m.get("role") in ("user", "assistant")][:-1]
+    if not before or before[-1].get("role") != "assistant" or not SHOW_CHOICE.search(_message_text(before[-1])):
+        return False
+    spoken = _spoken(request)
+    titles = (_spoken(title) for title in SHOW_TITLE.findall(_message_text(before[-1])))
+    return any(len(title) >= 2 and title in spoken for title in titles)
+
+
+def is_tv_follow_up(dialogue, request):
+    """"暂停", "音量调到15", "看如果奔跑是我的人生" while the last two exchanges were about the TV."""
+    if NOT_TV.search(request) or not (
+            TV_FOLLOW_UP.search(request) or TV_PICK.search(request) or picks_offered_show(dialogue, request)):
+        return False
+    return after_tv_talk(dialogue)
+
+
 def is_state_question(text):
     return bool(
         STATE_SUBJECTS.search(text)
@@ -468,8 +543,11 @@ def _claims(pattern, text, promise=False, past=PAST):
     return False
 
 
-def claim_need(sentence, acted=False, looked=False, saved=False, rule_context=False):
-    """"act", "look" or "save" when the sentence claims more than this turn's tools back up, else None."""
+def claim_need(sentence, acted=False, looked=False, saved=False, rule_context=False, tv=False, tv_context=False):
+    """"act", "look", "save" or "tv" when the sentence claims more than this turn's tools back up, else None.
+
+    tv: a TV tool ran; tv_context: the turn is about the TV, so a show's title is the TV's too.
+    """
     text = sentence.strip()
     if not text:
         return None
@@ -479,6 +557,13 @@ def claim_need(sentence, acted=False, looked=False, saved=False, rule_context=Fa
             return "save"
         if not QUESTION_END.search(text) and _claims(RULE_SAVE_PROMISE, text, promise=True, past=RECENT_PAST):
             return "save"
+    # A title can read as a condition: 《如果奔跑是我的人生》.
+    bare = SHOW_TITLE.sub("《》", text)
+    done, promise = (TV_DONE, TV_PROMISE) if TV_SET.search(text) else (SHOW_DONE, SHOW_PROMISE)
+    if (not tv and not QUESTION_END.search(text)
+            and (TV_SET.search(text) or tv_context and TV_SHOW.search(text) and not MUSIC_TALK.search(bare))
+            and (_claims(done, bare) or _claims(promise, bare, promise=True))):
+        return "tv"
     if acted:
         return None
     subject = CLAIM_SUBJECT.search(text)
@@ -815,8 +900,10 @@ class LLMProvider(LLMProviderBase):
         elif self.tool_guard and is_scheduled_control(request):
             # Any tool satisfies it: a time-of-day mention may still mean "now".
             required, note, reason = None, SCHEDULE_RETRY_NOTE, "定时控制请求未调用工具"
-        elif self.tool_guard and TV_WORDS.search(request) and (is_control_request(request) or is_state_question(request)):
-            required, note, reason = TV_TOOLS, TV_RETRY_NOTE, "电视请求未调用电视工具"
+        elif self.tool_guard and (TV_WORDS.search(request) and (is_control_request(request) or is_state_question(request))
+                                  or is_tv_follow_up(dialogue, request)):
+            # "明早七点开电视" is a TV request too; its tool is the scheduler.
+            required, note, reason = (TV_TOOLS, "cronjob"), TV_RETRY_NOTE, "电视请求未调用电视工具"
         elif self.tool_guard and is_control_request(request):
             required, note, reason = None, RETRY_NOTE, "设备控制请求未调用工具"
         elif self.tool_guard and is_state_question(request):
@@ -825,7 +912,11 @@ class LLMProvider(LLMProviderBase):
             required = note = reason = None
         # "保存好了" needs no rule word while a scene or linkage is being taught or confirmed.
         rule_context = bool(is_rule_request(request) or asked_about_rule(dialogue))
-        claim = {"rule_context": rule_context}
+        # "好，我给你打开《X》" is a TV claim while the TV is being talked about.
+        tv_context = bool(is_tv_talk(request) or TV_PICK.search(request) and not NOT_TV.search(request)
+                          or after_tv_talk(dialogue))
+        context = {"rule_context": rule_context, "tv_context": tv_context}
+        claim = dict(context)
         if note is None:
             state = {"spoken": False, "held": "", "tools": []}
             events = self._claim_checked(self._events(dialogue), claim)
@@ -836,8 +927,9 @@ class LLMProvider(LLMProviderBase):
             yield from self._clean(self._with_search_filler(events, state))
             if claim.get("need"):
                 logger.bind(tag=TAG).warning(f"没有调用工具就说做了，已丢弃并重试: {request} -> {claim['held'][:60]}")
-                note = {"act": CLAIM_RETRY_NOTE, "save": SAVE_CLAIM_NOTE}.get(claim["need"], STATE_RETRY_NOTE)
-                yield from self._final_attempt(self._with_note(dialogue, sent, note), rule_context=rule_context)
+                note = {"act": CLAIM_RETRY_NOTE, "save": SAVE_CLAIM_NOTE, "tv": TV_CLAIM_NOTE}.get(
+                    claim["need"], STATE_RETRY_NOTE)
+                yield from self._final_attempt(self._with_note(dialogue, sent, note), context=context)
                 return
             if state["spoken"]:
                 return
@@ -847,7 +939,7 @@ class LLMProvider(LLMProviderBase):
             acting = [t for t in state["tools"] if t.startswith(ACT_TOOLS)]
             retry_note = SILENT_AFTER_TOOLS_NOTE.format(tools="、".join(dict.fromkeys(acting))) if acting else FILLER_RETRY_NOTE
             yield from self._final_attempt(self._with_note(dialogue, sent, retry_note), self.search_failed_reply,
-                                           rule_context)
+                                           context)
             return
 
         # Hold the reply until the required tool runs (any tool for commands,
@@ -879,7 +971,7 @@ class LLMProvider(LLMProviderBase):
             return
         held = claim.get("held") or held
         logger.bind(tag=TAG).warning(f"{reason}，已丢弃回答并重试: {request} -> {held[:60]}")
-        yield from self._final_attempt(self._with_note(dialogue, sent, note), rule_context=rule_context)
+        yield from self._final_attempt(self._with_note(dialogue, sent, note), context=context)
 
     @staticmethod
     def _after_last_tool(events):
@@ -894,13 +986,13 @@ class LLMProvider(LLMProviderBase):
         if held:
             yield "text", "".join(held)
 
-    def _final_attempt(self, dialogue, silent_reply=None, rule_context=False):
+    def _final_attempt(self, dialogue, silent_reply=None, context=None):
         """The one retry. A claim that still has no tool behind it is not spoken either."""
-        claim, state = {"rule_context": rule_context}, {"spoken": False, "held": ""}
+        claim, state = dict(context or {}), {"spoken": False, "held": ""}
         yield from self._clean(self._with_search_filler(self._claim_checked(self._events(dialogue), claim), state))
         if claim.get("need"):
             logger.bind(tag=TAG).warning(f"重试后仍没有调用工具就说做了: {claim['held'][:60]}")
-            yield {"act": self.claim_failed_reply, "save": self.save_failed_reply}.get(
+            yield {"act": self.claim_failed_reply, "save": self.save_failed_reply, "tv": self.claim_failed_reply}.get(
                 claim["need"], self.state_failed_reply)
         elif not state["spoken"] and silent_reply:
             yield silent_reply
@@ -913,19 +1005,21 @@ class LLMProvider(LLMProviderBase):
         "我再执行一次") or a state ("显示是关着") without a tool behind it is
         held, together with everything after it, until such a tool runs; the
         held text was its lead-in and is dropped. If the turn ends first,
-        claim["need"] is "act", "look" or "save" and claim["held"] what was never
-        spoken. claim["rule_context"] (set by the caller) counts a bare "保存好了".
+        claim["need"] is "act", "look", "save" or "tv" and claim["held"] what was never
+        spoken. claim["rule_context"] (set by the caller) counts a bare "保存好了",
+        claim["tv_context"] a show's title as the TV's.
         """
         if not self.tool_guard:
             yield from events
             return
         rule_context = claim.get("rule_context", False)
-        acted = looked = saved = False
+        tv_context = claim.get("tv_context", False)
+        acted = looked = saved = tv = False
         pending, held, need = "", [], None
         for kind, value in events:
             if kind == "tool":
                 if pending and not need:
-                    need = claim_need(pending, acted, looked, saved, rule_context)
+                    need = claim_need(pending, acted, looked, saved, rule_context, tv, tv_context)
                     if need:
                         held = [pending]
                     else:
@@ -934,9 +1028,20 @@ class LLMProvider(LLMProviderBase):
                 acted = acted or value.startswith(ACT_TOOLS)
                 looked = looked or acted or value.startswith(LOOK_TOOLS)
                 saved = saved or value.startswith(RULE_CONFIRM_TOOL)
-                if need and (saved if need == "save" else acted or (need == "look" and looked)):
+                # A scheduled job backs up "明早七点我来打开电视".
+                tv = tv or value.startswith((TV_TOOLS, "cronjob"))
+                promised = ""
+                if need and {"save": saved, "tv": tv, "look": looked}.get(need, acted):
+                    # "我先在电视上搜一下，稍等。" tells what the slow TV tool is doing: spoken
+                    # once it runs. Other lead-ins are dropped.
+                    said = "".join(held)
+                    if need == "tv" and not _claims(TV_DONE, SHOW_TITLE.sub("《》", said)) and not claim_need(
+                            said, acted, looked, saved, rule_context, tv, tv_context):
+                        promised = said
                     held, need = [], None
                 yield kind, value
+                if promised:
+                    yield "text", promised
                 continue
             if need:
                 held.append(value)
@@ -958,13 +1063,13 @@ class LLMProvider(LLMProviderBase):
                 part, pending = pending[: end.end()], pending[end.end():]
                 if NARRATION.search(part):
                     continue
-                need = claim_need(part, acted, looked, saved, rule_context)
+                need = claim_need(part, acted, looked, saved, rule_context, tv, tv_context)
                 if need:
                     held, pending = [part, pending], ""
                     break
                 yield "text", part
         if pending and not need and not NARRATION.search(pending):
-            need = claim_need(pending, acted, looked, saved, rule_context)
+            need = claim_need(pending, acted, looked, saved, rule_context, tv, tv_context)
             if need:
                 held = [pending]
             else:

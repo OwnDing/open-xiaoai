@@ -599,6 +599,94 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(spoken, "电视关了。")
         self.assertIn(hermes.TV_RETRY_NOTE, requests[1])
 
+    TV_TALK = [user("我想看狂飙第二集。"), {"role": "assistant", "content": "开始播放《狂飙》第二集了。"}]
+
+    def test_tv_follow_ups_need_the_tv_tools(self):
+        # 2026-10-23: both answered from the chat with no tool call; the TV never paused.
+        for request, made_up in (("好的，暂停。", "已经暂停了。"), ("切音量调到15。", "音量调到十五了。")):
+            spoken, requests = self.run_dialogue(
+                self.TV_TALK + [user(request)],
+                [("text", made_up)],
+                [("tool", "mcp__tv_control__tv_playback"), ("text", "好了。")],
+            )
+            self.assertEqual(spoken, "好了。", request)
+            self.assertIn(hermes.TV_RETRY_NOTE, requests[1])
+
+    def test_tv_follow_up_detection(self):
+        tv, chat = self.TV_TALK, [user("讲个故事"), {"role": "assistant", "content": "从前有座山。"}]
+        for request in ("暂停", "继续", "好的，继续。", "继续播放", "下一集", "现在是第几集", "快进一分钟",
+                        "音量调到15", "大点声", "静音"):
+            self.assertTrue(hermes.is_tv_follow_up(tv + [user(request)], request), request)
+        for request in ("继续讲", "小爱音量调小一点", "暂停音乐", "放首歌"):
+            self.assertFalse(hermes.is_tv_follow_up(tv + [user(request)], request), request)
+        for request in ("暂停", "继续", "音量调到15"):
+            self.assertFalse(hermes.is_tv_follow_up(chat + [user(request)], request), request)
+        # Music replies name songs in 《》 too; the latest topic wins.
+        music = [user("放张惠妹的歌"), {"role": "assistant", "content": "好，正在客厅放张惠妹的歌，第一首是《如果你也听说》。"}]
+        for request in ("暂停", "音量调到15", "如果你也听说"):
+            self.assertFalse(hermes.is_tv_follow_up(music + [user(request)], request), request)
+        for request in ("暂停", "音量调到15"):
+            self.assertTrue(hermes.is_tv_follow_up(music + tv + [user(request)], request), request)
+
+    # 2026-10-23 evening: the reply before "看如果奔跑是我的人生", which got "好，我给你打开《……》" and no tool.
+    LISTED = [user("Okay, thank."), {"role": "assistant",
+                                     "content": "你想选哪部？《七时吉祥》《如果奔跑是我的人生》《理想之城》，说一个我就点开。"}]
+
+    def test_picking_a_listed_show_needs_the_tv_tools(self):
+        spoken, requests = self.run_dialogue(
+            self.LISTED + [user("看如果奔跑是我的人生。")],
+            [("text", "好，我给你打开《如果奔跑是我的人生》。")],
+            [("tool", "mcp__tv_control__tv_play"), ("text", "开始播放《如果奔跑是我的人生》。")],
+        )
+        self.assertEqual(spoken, "开始播放《如果奔跑是我的人生》。")
+        self.assertIn(hermes.TV_RETRY_NOTE, requests[1])
+
+    def test_tv_pick_detection(self):
+        for request in ("看如果奔跑是我的人生。", "如果奔跑是我的人生吧", "就理想之城", "第二个", "那我看小陈梁芳。", "我想看那个。"):
+            self.assertTrue(hermes.is_tv_follow_up(self.LISTED + [user(request)], request), request)
+        for request in ("想看。", "看来你不太行", "看看几点了", "Okay, thank.", "拜拜", "放首歌"):
+            self.assertFalse(hermes.is_tv_follow_up(self.LISTED + [user(request)], request), request)
+        # 2026-10-20: a question about a show the last reply only talked about.
+        chat = [user("喜剧之王电视剧是在哪里拍的呀？"),
+                {"role": "assistant", "content": "《喜剧之王》电影版主要是香港拍的。要我帮你查一下吗？"}]
+        request = "我是说喜剧之王的电视剧啦，就是杨超越演的那个。"
+        self.assertFalse(hermes.is_tv_follow_up(chat + [user(request)], request))
+
+    def test_tv_claims_need_a_tv_tool(self):
+        # 2026-10-23: said while searching for 杨超越, with no tool call.
+        for reply in ("我按杨超越在电视上搜了。", "我这就去电视上按她的名字搜。", "电视打开了。"):
+            self.assertEqual(hermes.claim_need(reply), "tv", reply)
+            self.assertIsNone(hermes.claim_need(reply, acted=True, looked=True, tv=True), reply)
+        reply = "好，我给你打开《如果奔跑是我的人生》。"
+        self.assertEqual(hermes.claim_need(reply, tv_context=True), "tv")
+        self.assertIsNone(hermes.claim_need(reply))
+        for reply in ("跟我说片名就行，我去电视上找。", "《七时吉祥》《理想之城》，说一个我就点开。", "要我在电视上打开吗？",
+                      "好，给你放周杰伦的歌《晴天》了。", "电视没打开，你再说一次。",
+                      "我给你搜一下《喜剧之王》在哪拍的。", "这部电视剧《喜剧之王》十月六号开播了。", "我帮你搜一下好看的电视剧。"):
+            self.assertIsNone(hermes.claim_need(reply, tv_context=True), reply)
+
+    def test_a_tv_claim_without_a_tv_tool_is_retried(self):
+        spoken, requests = self.run_dialogue(
+            self.LISTED + [user("네。")],
+            [("text", "我按杨超越在电视上搜了。")],
+            [("tool", "mcp__tv_control__tv_play"), ("text", "搜到杨超越主演的几部。")],
+        )
+        self.assertEqual(spoken, "搜到杨超越主演的几部。")
+        self.assertIn(hermes.TV_CLAIM_NOTE, requests[1])
+
+    def test_a_tv_promise_before_the_tool_is_spoken(self):
+        # 20 s of tv_play: "我先在电视上搜一下" is worth hearing.
+        spoken, requests = self.run_turn(
+            "我想看狂飙",
+            [("text", "我先在电视上搜一下这个片名，稍等。"), ("tool", "mcp__tv_control__tv_play"), ("text", "开始播放《狂飙》。")],
+        )
+        self.assertEqual((spoken, len(requests)), ("我先在电视上搜一下这个片名，稍等。开始播放《狂飙》。", 1))
+        spoken, requests = self.run_turn(
+            "明早七点开电视",
+            [("tool", "cronjob_manage"), ("text", "好，明早七点我来给你打开电视。")],
+        )
+        self.assertEqual((spoken, len(requests)), ("好，明早七点我来给你打开电视。", 1))
+
     def test_earlier_sentences_are_spoken_before_a_late_claim(self):
         spoken, requests = self.run_turn(
             "今天怎么样",

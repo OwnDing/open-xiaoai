@@ -28,6 +28,7 @@ QIYI = "com.tcl.qiyiguo"
 QIYI_ACTION = "com.gala.video.mediasession.custom.action."
 # iQiyi seeks 6-9 s per LEFT/RIGHT press, more when pressed in a row.
 SEEK_STEP_S = 8
+IR_WAKE_S = 45
 
 # Spoken names that are not part of the launcher label.
 APP_ALIASES = {
@@ -150,8 +151,11 @@ class TV:
                 raise TVError("电视开着，但电视助手启动不了")
             return status, False
         self.ha.call("button", "press", {"entity_id": IR_POWER})
-        if not self.wait(lambda: self.reachable(tries=1), 25, step=1):
-            raise TVError("已经发了红外开机，但电视没有连上网络")
+        # The TV is back on WiFi in 4 s, but after a recent standby the mini PC (Windows) found it
+        # only 15-75 s later (2026-10-23): it backs off its ARP retries for an unreachable host.
+        # Giving up early invites a second power press, which turns the starting TV off again.
+        if not self.wait(lambda: self.reachable(tries=1), IR_WAKE_S, step=1):
+            raise TVError(f"已经发了红外开机，但电视过了{IR_WAKE_S}秒还没连上网络")
         status = self.wait(self.status, 8) or self.start_helper()
         if not status:
             raise TVError("电视开了，但电视助手启动不了")
