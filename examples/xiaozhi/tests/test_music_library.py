@@ -250,6 +250,9 @@ class IntentTests(unittest.TestCase):
         self.check("随便放几首歌", "play", query="")
         self.check("播放", "play", query="", resume=True)
         self.check("放周杰伦", "play", query="周杰伦", strict=True, music=False)
+        # Bare 播放: may be a show for the TV, so a miss is not ours to answer.
+        self.check("播放狂飙", "play", query="狂飙", strict=False, music=False)
+        self.check("我想听狂飙", "play", query="狂飙", music=True)
         self.check("换首周杰伦的歌", "play", query="周杰伦", music=True)
         self.check("呃，换成张惠妹的", "play", query="张惠妹", music=True)
 

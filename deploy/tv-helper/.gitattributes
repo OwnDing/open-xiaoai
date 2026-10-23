@@ -1,0 +1,4 @@
+# Gradle wrapper scripts: the .bat must keep CRLF for cmd.exe.
+gradlew text eol=lf
+*.bat text eol=crlf
+*.jar binary

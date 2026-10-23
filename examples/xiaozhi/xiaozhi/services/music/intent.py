@@ -184,4 +184,7 @@ def parse(text, names=()):
     if _NOT_MUSIC.search(query):
         return None
     explicit = verb in _PLAY_VERBS or qty in _SONG_QTY or singer or bool(_MUSIC_WORDS.search(query))
-    return Intent("play", query=query, strict=not (explicit or qty), music=explicit)
+    # A bare "播放狂飙" may be a show for the TV: only a song word, a singer ("梁静茹的勇气")
+    # or 听 makes a miss ours to answer ("曲库里没找到"); otherwise the model gets it.
+    music = qty in _SONG_QTY or singer or "的" in query or bool(_MUSIC_WORDS.search(query)) or "听" in verb
+    return Intent("play", query=query, strict=not (explicit or qty), music=music)

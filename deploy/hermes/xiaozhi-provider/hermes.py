@@ -117,6 +117,15 @@ STATE_ASK = re.compile(
 )
 # Preferences are answered from memory ("我睡觉空调一般开几度").
 PREFERENCE_WORDS = re.compile(r"应该|习惯|一般|喜欢|平时|合适|最好|舒服|舒适|怎么设|设多少")
+# The living-room TV is driven by the tv_control MCP server, never by Home Assistant
+# services: its media player cannot wake it and the IR power code toggles.
+TV_WORDS = re.compile(r"电视|奇异果|爱奇艺")
+TV_TOOLS = "mcp__tv_control__"
+TV_RETRY_NOTE = (
+    "（系统提示：这是对客厅电视的请求，但你上一次没有调用电视工具就回答了。电视只能用 mcp__tv_control__ 开头的工具"
+    "操作和查询（tv_power、tv_open_app、tv_play、tv_playback、tv_volume、tv_status、tv_screen、tv_click、tv_keys），"
+    "不要用 ha_call_service 或红外按钮。现在调用合适的电视工具，再按工具结果回答。）"
+)
 STATE_RETRY_NOTE = (
     "（系统提示：这是询问设备当前状态的问题，但你上一次没有查询就回答了。"
     "聊天记录和记忆里的状态可能早已过时，现在必须调用 ha_get_state 或 ha_list_entities "
@@ -223,7 +232,7 @@ SCHEDULE_RETRY_NOTE = (
 
 # What a reply claims (see the module docstring). Tools that switch something,
 # or report the past, back up "开了"; a Home Assistant lookup backs up "开着".
-ACT_TOOLS = ("ha_call_service", "mcp__home_rules__", "mcp__home_history__", "cronjob")
+ACT_TOOLS = ("ha_call_service", "mcp__home_rules__", "mcp__home_history__", "mcp__tv_control__", "cronjob")
 LOOK_TOOLS = ("ha_",)
 CLAIM_SUBJECT = re.compile(DEVICE_WORDS.pattern + r"|场景|两盏|几盏|全屋|所有|状态")
 DONE_VERB = re.compile(
@@ -806,6 +815,8 @@ class LLMProvider(LLMProviderBase):
         elif self.tool_guard and is_scheduled_control(request):
             # Any tool satisfies it: a time-of-day mention may still mean "now".
             required, note, reason = None, SCHEDULE_RETRY_NOTE, "定时控制请求未调用工具"
+        elif self.tool_guard and TV_WORDS.search(request) and (is_control_request(request) or is_state_question(request)):
+            required, note, reason = TV_TOOLS, TV_RETRY_NOTE, "电视请求未调用电视工具"
         elif self.tool_guard and is_control_request(request):
             required, note, reason = None, RETRY_NOTE, "设备控制请求未调用工具"
         elif self.tool_guard and is_state_question(request):

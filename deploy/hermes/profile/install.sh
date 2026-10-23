@@ -13,9 +13,10 @@ cp /seed/profile/config.yaml "$HOME_DIR/config.yaml"
 cp /seed/profile/SOUL.md "$HOME_DIR/SOUL.md"
 cp -R /seed/profile/skills/. "$HOME_DIR/skills/"
 # MCP servers (config.yaml mcp_servers): voice-taught scenes and linkages,
-# device history (home_history imports home_rules' HA client) and music.
+# device history and the TV (home_history and tv_control import home_rules' HA
+# client) and music.
 mkdir -p "$HOME_DIR/mcp"
-for server in home_rules home_history xiaoqi_music; do
+for server in home_rules home_history xiaoqi_music tv_control; do
     rm -rf "$HOME_DIR/mcp/$server"
     cp -R "/seed/profile/mcp/$server" "$HOME_DIR/mcp/"
 done

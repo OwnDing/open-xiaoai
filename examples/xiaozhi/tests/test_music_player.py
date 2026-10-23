@@ -135,8 +135,10 @@ class PlayerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await self.player.command("放周杰伦"))["handled"])
 
     async def test_not_found_keeps_listening(self):
-        result = await self.player.command("播放不存在的东西")
+        result = await self.player.command("我想听不存在的东西")
         self.assertEqual(result, {"handled": True, "say": "曲库里没找到不存在的东西。", "end": False})
+        # "播放狂飙" without a song or singer may be a TV show: the model decides.
+        self.assertFalse((await self.player.command("播放狂飙"))["handled"])
         result = await self.player.command("播放梁静茹的情歌")
         self.assertEqual(result["say"], "没找到情歌，先放梁静茹的歌。")
 

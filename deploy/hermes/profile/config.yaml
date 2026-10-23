@@ -90,6 +90,21 @@ mcp_servers:
     tools:
       resources: false
       prompts: false
+  # The living-room TCL TV: power (the 小爱 speaker's IR), apps, iQiyi shows,
+  # playback, volume and the screen, through 小七电视助手 on the TV
+  # (deploy/tv-helper); see mcp/tv_control. Imports home_rules' HA client.
+  tv_control:
+    command: /opt/hermes/.venv/bin/python
+    args: ["-m", "tv_control.server"]
+    cwd: /opt/data/mcp
+    env:
+      HASS_URL: "${HASS_URL}"
+      HASS_TOKEN: "${HASS_TOKEN}"
+      TV_HELPER_URL: "${TV_HELPER_URL}"
+      TV_HELPER_TOKEN: "${TV_HELPER_TOKEN}"
+    tools:
+      resources: false
+      prompts: false
 
 memory:
   memory_enabled: true
