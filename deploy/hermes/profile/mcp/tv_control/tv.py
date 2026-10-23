@@ -103,7 +103,8 @@ class TV:
         never makes a running TV look off: that would make power_on toggle it off by IR."""
         for attempt in range(tries):
             try:
-                with socket.create_connection((self.host, 5555), timeout=1.5):
+                # On the LAN a TV that is on answers in milliseconds.
+                with socket.create_connection((self.host, 5555), timeout=1.0):
                     return True
             except OSError:
                 if attempt + 1 < tries:
@@ -122,6 +123,10 @@ class TV:
     # -- power ---------------------------------------------------------------------------------
 
     def status(self):
+        """The helper's status; None when the TV is off or the helper does not run. One quick
+        probe first: a TV in standby is off the network and would hold the whole HTTP timeout."""
+        if not self.reachable(tries=1):
+            return None
         return self.helper("GET", "/status", timeout=4)
 
     def start_helper(self):

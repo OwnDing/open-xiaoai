@@ -167,6 +167,13 @@ class PowerTests(unittest.TestCase):
         self.assertEqual(tv.power(False)["say"], "电视已经关着。")
         self.assertEqual(tv.ha.calls, [])
 
+    def test_status_of_a_tv_in_standby_skips_the_helper(self):
+        home = Home(on=False)
+        tv = make(home)
+        self.assertIsNone(tv.status())
+        self.assertEqual(tv.describe(), {"ok": True, "power": "off"})
+        self.assertEqual(home.requests, [])
+
     def test_reachable_retries_before_calling_the_tv_off(self):
         tv = TV(helper_url="http://tv.test:8765", helper_token="t", ha=FakeHA(Home()), clock=Clock())
         attempts = []
