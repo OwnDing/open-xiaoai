@@ -120,6 +120,8 @@ PREFERENCE_WORDS = re.compile(r"应该|习惯|一般|喜欢|平时|合适|最好
 # The living-room TV is driven by the tv_control MCP server, never by Home Assistant
 # services: its media player cannot wake it and the IR power code toggles.
 TV_WORDS = re.compile(r"电视|奇异果|爱奇艺")
+# What its apps leave in the chat: 小七 has no other browser or screen.
+TV_APP = re.compile(r"浏览器|地址栏|网址|输入框|屏幕")
 TV_TOOLS = "mcp__tv_control__"
 # Follow-ups about what the TV plays name no device ("好的，暂停。", "切音量调到15。"): right
 # after TV talk they are TV requests too. 2026-10-23 both were answered "已经暂停了" and
@@ -128,11 +130,15 @@ TV_FOLLOW_UP = re.compile(
     r"暂停|继续(?:播|放|看)|接着(?:播|放|看)|^\W*(?:好的?\W*)?继续\W*$|停止播放|下一集|上一集|第.{1,4}集"
     r"|快进|快退|倒回|音量|静音|声音(?:大|小|调)|大点声|小点声|大声点|小声点"
 )
+# Steps inside an app (2026-10-23 BrowseHere: "输入B点com还个网址", "打开低音搜索网站", "都不看回到"),
+# but not a question about them ("那你刚刚那个K是怎么输入的呢？").
+TV_APP_STEP = re.compile(r"输入|网址|网站|退出|返回|回到|主页|主界面")
+WHY_HOW = re.compile(r"怎么|为什么|为啥|是不是|吗|呢\W*$")
 NOT_TV = re.compile(r"音箱|小爱|歌|音乐")
 # Picking a show after TV talk ("看如果奔跑是我的人生", "那我看小陈梁芳", "第二个"): 2026-10-23
 # "好，我给你打开《如果奔跑是我的人生》。" came with no tool call and the TV stayed on the list.
 TV_PICK = re.compile(
-    r"^\W*(?:那|就|好的?|嗯)?\W*(?:我|给我)?(?:想|要|就)?(?:看|播放?|放)(?![看下来起样])\w"
+    r"^\W*(?:那|就|好的?|嗯)?\W*(?:我|给我)?(?:想|要|就)?(?:看|播放?|放)(?![看下来起样到见过懂清完])\w"
     r"|^\W*(?:就|要|看)?第[一二三四五六七八九十两\d]{1,2}(?:个|部)"
 )
 SHOW_TITLE = re.compile(r"《([^》]{1,30})》")
@@ -142,30 +148,32 @@ SHOW_CHOICE = re.compile(r"[看选播放]哪|哪[一个部]|点开")
 # Music talk names songs in 《》 too ("第一首是《如果你也听说》"), so those count only without it.
 TV_SHOW = re.compile(SHOW_TITLE.pattern + r"|第.{1,4}集")
 MUSIC_TALK = re.compile(r"歌|音乐|专辑|唱|首(?![页播])")
-# A reply that does something on the TV ("我按杨超越在电视上搜了", "我这就去电视上按她的名字搜").
-# 电视剧 is a show, not the set.
-TV_SET = re.compile(r"电视(?![剧台])|奇异果|爱奇艺")
+# A reply that does something on the TV ("我按杨超越在电视上搜了", "我这就去电视上按她的名字搜",
+# "必应打开了，页面已经显示在屏幕上", "好，退出爱奇艺了"). 电视剧 is a show, not the set.
+TV_SET = re.compile(r"电视(?![剧台])|奇异果|爱奇艺|" + TV_APP.pattern)
 
 
 def _tv_claims(act):
-    done = re.compile(act + r"(?:好|完|上|起来|成功)?了(?![吗么没嘛吧？?])|开始播|已(?:经)?(?:帮你|给你|为你)?" + act)
+    done = re.compile(
+        act + r"(?:好|完|上|起来|成功)?了(?![吗么没嘛吧？?])|开始播|已(?:经)?(?:帮你|给你|为你)?" + act
+        + r"|(?:打开|退出|返回|回到|输入|输好|清掉|删掉)[^，,。！!？?；;]{1,8}?了(?![吗么没嘛吧？?])")
     promise = re.compile(r"我(?:先|再|马上|这就|现在|立刻|重新|来|去|就|帮你|给你)+[^，,。！!？?]{0,12}?" + act)
     return done, promise
 
 
 # Not "开播了", "热播" (the show's own news).
-TV_DONE, TV_PROMISE = _tv_claims(r"(?:打开|点开|(?<![开首热直重])播放?|放|搜|换|切|暂停|继续)")
+TV_DONE, TV_PROMISE = _tv_claims(r"(?:打开|点开|(?<![开首热直重])播放?|放|搜|换|切|暂停|继续|退出|返回|回到|输入|输好|清掉|删掉)")
 # With only a show's title to go on, 搜 may be a web search ("我给你搜一下《喜剧之王》在哪拍的").
 SHOW_DONE, SHOW_PROMISE = _tv_claims(r"(?:打开|点开|(?<![开首热直重])播放?|放|换|切|暂停|继续)")
 TV_RETRY_NOTE = (
     "（系统提示：这是对客厅电视的请求，但你上一次没有调用电视工具就回答了。电视只能用 mcp__tv_control__ 开头的工具"
-    "操作和查询（tv_power、tv_open_app、tv_play、tv_playback、tv_volume、tv_status、tv_screen、tv_click、tv_keys），"
+    "操作和查询（tv_power、tv_open_app、tv_play、tv_playback、tv_volume、tv_status、tv_screen、tv_click、tv_type、tv_keys），"
     "不要用 ha_call_service 或红外按钮。现在调用合适的电视工具，再按工具结果回答。）"
 )
 TV_CLAIM_NOTE = (
     "（系统提示：你上一次的回答说在电视上搜了、打开了或播了（或者说马上去做），但这一轮你没有调用电视工具，"
-    "电视其实没有动。要操作电视，现在就调用 mcp__tv_control__ 开头的工具（播片名用 tv_play，title 填片名），"
-    "按工具结果回答；只是聊天，就直接回答，不要说你操作了电视。）"
+    "电视其实没有动。要操作电视，现在就调用 mcp__tv_control__ 开头的工具（播片名用 tv_play，title 填片名；"
+    "输入网址或搜索词用 tv_type），按工具结果回答；只是聊天，就直接回答，不要说你操作了电视。）"
 )
 STATE_RETRY_NOTE = (
     "（系统提示：这是询问设备当前状态的问题，但你上一次没有查询就回答了。"
@@ -485,7 +493,7 @@ def is_history_follow_up(dialogue, request):
 
 
 def is_tv_talk(text):
-    return bool(TV_WORDS.search(text) or (TV_SHOW.search(text) and not MUSIC_TALK.search(text)))
+    return bool(TV_WORDS.search(text) or TV_APP.search(text) or (TV_SHOW.search(text) and not MUSIC_TALK.search(text)))
 
 
 def after_tv_talk(dialogue):
@@ -511,9 +519,10 @@ def picks_offered_show(dialogue, request):
 
 
 def is_tv_follow_up(dialogue, request):
-    """"暂停", "音量调到15", "看如果奔跑是我的人生" while the last two exchanges were about the TV."""
+    """"暂停", "音量调到15", "看如果奔跑是我的人生", "输入网址" while the last two exchanges were about the TV."""
     if NOT_TV.search(request) or not (
-            TV_FOLLOW_UP.search(request) or TV_PICK.search(request) or picks_offered_show(dialogue, request)):
+            TV_FOLLOW_UP.search(request) or TV_APP_STEP.search(request) and not WHY_HOW.search(request)
+            or TV_PICK.search(request) or picks_offered_show(dialogue, request)):
         return False
     return after_tv_talk(dialogue)
 

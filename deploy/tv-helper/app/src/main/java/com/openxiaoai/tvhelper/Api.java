@@ -28,7 +28,7 @@ import java.util.Set;
  * GET  /status                      what is in front, screen on
  * GET  /screen?limit=150            labelled items on screen, the focused one
  * POST /click  {text, index}        click the item labelled text
- * POST /type   {text}               set the text of the input field
+ * POST /type   {text, submit}       set the text of the input field; submit runs its IME action
  * POST /key    {keys: [..]}         press keys: UP DOWN LEFT RIGHT OK BACK HOME MENU VOLUME_UP SLEEP ...
  * POST /global {action}             back, home, recents, notifications
  * GET  /apps                        launcher apps: label, package
@@ -63,7 +63,7 @@ final class Api implements Http.Handler {
             case "POST /click":
                 return Http.Response.ok(Screen.click(device, body.optString("text"), body.optInt("index", 0)));
             case "POST /type":
-                return Http.Response.ok(Screen.type(device.automation, body.optString("text")));
+                return Http.Response.ok(Screen.type(device.automation, body.optString("text"), body.optBoolean("submit")));
             case "POST /key":
                 return Http.Response.ok(keys(body));
             case "POST /global":

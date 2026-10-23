@@ -97,9 +97,19 @@ def tv_click(text: str, index: int = 0) -> dict[str, Any]:
 
 
 @server.tool()
+def tv_type(text: str, submit: bool = True) -> dict[str, Any]:
+    """Type text into the input field on the TV screen (browser address bar: a site such as
+    bing.com; a search box: the words), replacing what is in it. Open the field first: tv_click
+    "搜索或输入 URL" in BrowseHere, or the app's search box. submit=true then sends it (go/search)."""
+    return _run(TV.type, text, submit)
+
+
+@server.tool()
 def tv_keys(keys: list[str]) -> dict[str, Any]:
     """Press remote keys in order: UP DOWN LEFT RIGHT OK BACK HOME MENU, VOLUME_UP VOLUME_DOWN,
-    MEDIA_PLAY_PAUSE, digits 0-9. For moving around pages; prefer tv_click when the item has text."""
+    MEDIA_PLAY_PAUSE, digits 0-9. For moving around pages; prefer tv_click when the item has text.
+    Never for typing: while an on-screen keyboard is up, OK and ENTER type its highlighted key
+    (a stray "k"); use tv_type."""
     return _run(TV.keys, keys)
 
 

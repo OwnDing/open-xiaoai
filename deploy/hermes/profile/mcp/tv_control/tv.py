@@ -29,6 +29,8 @@ QIYI_ACTION = "com.gala.video.mediasession.custom.action."
 # iQiyi seeks 6-9 s per LEFT/RIGHT press, more when pressed in a row.
 SEEK_STEP_S = 8
 IR_WAKE_S = 45
+# Buttons that send what was typed (browser address bar, Bing, app search boxes), as _norm gives them.
+SUBMIT_LABELS = {"搜索", "搜索网页", "search", "前往", "go", "确定", "完成", "进入"}
 
 # Spoken names that are not part of the launcher label.
 APP_ALIASES = {
@@ -360,6 +362,45 @@ class TV:
         if not result.get("ok"):
             return {"ok": False, "error": result.get("error"), "on_screen": result.get("on_screen", [])}
         return {"ok": True, "clicked": result.get("clicked")}
+
+    def type(self, text, submit=True):
+        """Puts text into the input field on screen (the focused one, else the first), replacing
+        what is there. submit runs the field's own search/go action; a web page ignores that
+        (Bing's search box keeps the text), so then the search button beside the field is clicked."""
+        result = self.call("POST", "/type", {"text": text, "submit": submit})
+        if not result.get("ok"):
+            raise TVError(result.get("error") or "输入没有成功")
+        if not submit:
+            return {"ok": True, "typed": text, "say": f"输入了“{text}”。"}
+        if self.wait(lambda: not self._field_holds(text), 2):
+            return {"ok": True, "typed": text, "submitted": True, "say": f"输入了“{text}”并确认了。"}
+        button = self._submit_button()
+        if button and self.call("POST", "/click", {"text": button[0], "index": button[1]}).get("ok"):
+            return {"ok": True, "typed": text, "submitted": True, "say": f"输入了“{text}”，点了“{button[0]}”。"}
+        return {"ok": True, "typed": text, "submitted": False,
+                "say": f"输入了“{text}”，但没找到能确认的按钮，看一下屏幕再点。"}
+
+    def _field_holds(self, text):
+        return any(item.get("editable") and item.get("focused") and item["text"] == text
+                   for item in self.screen(80).get("items", []))
+
+    def _submit_button(self):
+        """(label, index for /click) of the search/go button on the input field's row, nearest first."""
+        items = self.screen(150).get("items", [])
+        field = next((i for i in items if i.get("editable") and i.get("focused")), None)
+        if field is None:
+            return None
+        left, top, right, bottom = field["bounds"]
+        found = []
+        for item in items:
+            label = item["text"].strip()
+            if _norm(label) not in SUBMIT_LABELS:
+                continue
+            x0, y0, x1, y1 = item["bounds"]
+            if x0 >= left and top - 40 <= (y0 + y1) / 2 <= bottom + 40:
+                index = sum(_norm(other["text"]) == _norm(label) for other in items[:items.index(item)])
+                found.append((abs(x0 - right), label, index))
+        return min(found)[1:] if found else None
 
     def keys(self, keys):
         result = self.call("POST", "/key", {"keys": list(keys), "interval_ms": 250})

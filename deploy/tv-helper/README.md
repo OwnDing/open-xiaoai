@@ -29,7 +29,7 @@
 | 部分 | 位置 | 作用 |
 |---|---|---|
 | 小七电视助手 | `deploy/tv-helper/`（本目录） | 电视上的 HTTP 服务，shell 身份运行 |
-| MCP `tv_control` | `deploy/hermes/profile/mcp/tv_control/` | 小七的电视工具：`tv_status` `tv_power` `tv_open_app` `tv_play` `tv_playback` `tv_volume` `tv_screen` `tv_click` `tv_keys` |
+| MCP `tv_control` | `deploy/hermes/profile/mcp/tv_control/` | 小七的电视工具：`tv_status` `tv_power` `tv_open_app` `tv_play` `tv_playback` `tv_volume` `tv_screen` `tv_click` `tv_type` `tv_keys` |
 | SOUL 规则 | `deploy/hermes/profile/SOUL.md` | 电视只用 `mcp__tv_control__` 工具，不用 HA 媒体播放器或红外按钮 |
 | xiaozhi 规则 | `deploy/hermes/xiaozhi-provider/hermes.py` | 电视工具算“做了”的依据（`ACT_TOOLS`）；提到电视的控制或状态请求必须调用电视工具（`TV_WORDS`） |
 | 音乐分流 | `examples/xiaozhi/xiaozhi/services/music/intent.py` | 只说“播放某某”、曲库里没有时交给小七（多半是要在电视上看），不再回答“曲库里没找到” |
@@ -87,7 +87,7 @@ cat /data/local/tmp/xiaoqi-tv-helper.log
 | `GET /status` | 前台应用、最近的 Activity、屏幕是否亮着、版本 |
 | `GET /screen?limit=150` | 屏幕上的文字（阅读顺序，带坐标），焦点项 |
 | `POST /click {text, index}` | 点击带这段文字的项（先完全匹配，再前缀，再包含；`index` 选第几个） |
-| `POST /type {text}` | 往焦点输入框（没有就第一个输入框）填文字，支持中文 |
+| `POST /type {text, submit}` | 往焦点输入框（没有就第一个输入框）填文字，支持中文；`submit` 再执行输入框的输入法动作（搜索、前往），返回 `submitted`。屏幕键盘（搜狗 TV）弹出时，`ENTER` 和 `OK` 键都会打出键盘上高亮的那个字母（2026-10-23 打出过 “k”），所以确认不能靠按键。网页里的输入框（必应）和 BrowseHere 的地址栏都不理会输入法动作，`tv_type` 这时去点输入框同一行的“搜索/前往”按钮 |
 | `POST /key {keys}` 或 `{key, repeat, interval_ms}` | 按键：UP DOWN LEFT RIGHT OK BACK HOME MENU SLEEP WAKEUP VOLUME_UP VOLUME_MUTE 数字…（KeyEvent 名去掉 `KEYCODE_`） |
 | `POST /global {action}` | back、home、recents、notifications |
 | `GET /apps`、`POST /launch {package}` | 桌面上的应用（名称、包名）、打开应用 |

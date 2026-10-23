@@ -674,6 +674,36 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(spoken, "搜到杨超越主演的几部。")
         self.assertIn(hermes.TV_CLAIM_NOTE, requests[1])
 
+    # 2026-10-23 23:06: the browser was opened on the TV, then three replies made up typing and pages.
+    BROWSER = [user("打开b here浏览器。"), {"role": "assistant", "content": "BrowseHere浏览器打开了。"}]
+
+    def test_tv_app_follow_ups_need_the_tv_tools(self):
+        for request in ("输入B点com还个网址。", "打开低音搜索网站。", "好的，我看到K了，你重新输入。"):
+            self.assertTrue(hermes.is_tv_follow_up(self.BROWSER + [user(request)], request), request)
+        iqiyi = [user("打开爱奇艺搜索喜剧之王。"), {"role": "assistant", "content": "搜出来好几个，您想看哪个？"}]
+        self.assertTrue(hermes.is_tv_follow_up(iqiyi + [user("呃，都不看回到。")], "呃，都不看回到。"))
+        self.assertIsNone(hermes.TV_PICK.search("好的，我看到K了"))
+        chat = [user("讲个故事"), {"role": "assistant", "content": "从前有座山。"}]
+        self.assertFalse(hermes.is_tv_follow_up(chat + [user("输入法怎么切换")], "输入法怎么切换"))
+        request = "那你刚刚那个K是怎么输入的呢？"
+        self.assertFalse(hermes.is_tv_follow_up(self.BROWSER + [user(request)], request))
+
+    def test_tv_app_claims_need_a_tv_tool(self):
+        for reply in ("必应打开了，页面已经显示在屏幕上。", "好，退出爱奇艺了。",
+                      "我在浏览器地址栏里输入了“低音”，但跳出来的是几个不相干的搜索结果。",
+                      "“k”清掉了，也重新输好网址了，现在给您按确认。"):
+            self.assertEqual(hermes.claim_need(reply), "tv", reply)
+        for reply in ("屏幕上现在是浏览器首页，网址栏是空的，还没有打开必应。", "要我在浏览器里输入网址吗？",
+                      "你可以用遥控器在地址栏输入 bing 点 com。"):
+            self.assertIsNone(hermes.claim_need(reply), reply)
+        spoken, requests = self.run_dialogue(
+            self.BROWSER + [user("B应微软必应搜索引擎了。")],
+            [("text", "必应打开了，页面已经显示在屏幕上。")],
+            [("tool", "mcp__tv_control__tv_type"), ("text", "输入了 bing.com，必应打开了。")],
+        )
+        self.assertEqual(spoken, "输入了 bing.com，必应打开了。")
+        self.assertIn(hermes.TV_CLAIM_NOTE, requests[1])
+
     def test_a_tv_promise_before_the_tool_is_spoken(self):
         # 20 s of tv_play: "我先在电视上搜一下" is worth hearing.
         spoken, requests = self.run_turn(

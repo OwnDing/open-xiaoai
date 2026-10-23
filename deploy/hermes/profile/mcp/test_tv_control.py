@@ -66,6 +66,8 @@ class Home:
         self.requests = []
         self.search_results = {}
         self.episode = 3
+        self.ime_submits = True  # a native field; a web page ignores the IME action
+        self.submitted_page = []
 
     def ir_toggle(self):
         self.on = not self.on
@@ -91,11 +93,24 @@ class Home:
             self.package = QIYI
             self.items = self.search_results.get(keyword, [])
             return {"ok": True}
+        if path == "/type":
+            field = next((i for i in self.items if i.get("editable") and i.get("focused")), None)
+            if field is None:
+                return {"ok": False, "error": "屏幕上没有输入框"}
+            field["text"] = body["text"]
+            if body.get("submit") and self.ime_submits:
+                self.items = self.submitted_page
+            return {"ok": True, "submitted": bool(body.get("submit") and self.ime_submits)} if body.get("submit") else {"ok": True}
         if path.startswith("/screen"):
             items = list(self.items)
             if self.sessions and self.sessions[0]["state"] == "playing":
                 items.append({"text": f"狂飙 第{self.episode}集", "bounds": [0, 0, 10, 10]})
             return {"ok": True, "package": self.package, "items": items}
+        if path == "/click" and body["text"] in ("搜索", "搜索网页") and self.submitted_page:
+            matching = [i for i in self.items if i["text"] == body["text"]]
+            if matching[body.get("index", 0)].get("submits"):
+                self.items = self.submitted_page
+            return {"ok": True, "clicked": body["text"]}
         if path == "/click":
             if body["text"] == "播放" and any(i["text"] == "播放" for i in self.items):
                 self.sessions = [{"package": QIYI, "state": "playing", "title": "狂飙", "position_ms": 95000,
@@ -280,6 +295,47 @@ class PlaybackTests(unittest.TestCase):
     def test_nothing_playing(self):
         with self.assertRaises(TVError):
             make(Home()).media("pause")
+
+
+# Bing in BrowseHere, 2026-10-23: a "搜索" link elsewhere, the field's own button on its row.
+BING = [{"text": "搜索", "bounds": [100, 40, 160, 80]},
+        {"text": "", "bounds": [239, 221, 1583, 286], "focused": True, "editable": True},
+        {"text": "搜索网页", "bounds": [1586, 236, 1660, 271], "submits": True},
+        {"text": "Search", "bounds": [1664, 254, 1680, 293]}]
+
+
+class TypeTests(unittest.TestCase):
+    def test_native_field_submits_itself(self):
+        home = Home()
+        home.items = [{"text": "搜索或输入 URL", "bounds": [216, 80, 1508, 176], "focused": True, "editable": True},
+                      {"text": "搜索", "bounds": [1520, 80, 1616, 176]}]
+        home.submitted_page = [{"text": "必应", "bounds": [0, 0, 10, 10]}]
+        result = make(home).type("bing.com")
+        self.assertEqual((result["submitted"], home.items), (True, home.submitted_page))
+        self.assertFalse(any(r[1] == "/click" for r in home.requests))
+
+    def test_web_page_field_gets_the_button_on_its_row(self):
+        home = Home()
+        home.ime_submits = False
+        home.items = [dict(item) for item in BING]
+        home.submitted_page = [{"text": "今天天气 - 搜索", "bounds": [0, 0, 10, 10]}]
+        result = make(home).type("今天天气")
+        self.assertTrue(result["submitted"])
+        self.assertEqual(home.items, home.submitted_page)
+        self.assertIn(("POST", "/click", {"text": "搜索网页", "index": 0}), home.requests)
+
+    def test_without_submit_only_types(self):
+        home = Home()
+        home.items = [dict(item) for item in BING]
+        result = make(home).type("今天天气", submit=False)
+        self.assertEqual(result["say"], "输入了“今天天气”。")
+        self.assertEqual(home.items[1]["text"], "今天天气")
+
+    def test_no_input_field(self):
+        home = Home()
+        home.items = [{"text": "主页", "bounds": [0, 0, 10, 10]}]
+        with self.assertRaises(TVError):
+            make(home).type("bing.com")
 
 
 class ToolTests(unittest.TestCase):

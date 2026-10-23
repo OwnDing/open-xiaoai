@@ -13,7 +13,7 @@ import java.nio.file.Paths;
  * Serves the HTTP API on PORT until killed.
  */
 public final class Main {
-    static final String VERSION = "0.2.1";
+    static final String VERSION = "0.3.0";
     static final int PORT = 8765;
 
     private Main() {

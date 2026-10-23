@@ -2,6 +2,7 @@ package com.openxiaoai.tvhelper;
 
 import android.app.UiAutomation;
 import android.graphics.Rect;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.InputDevice;
@@ -234,8 +235,12 @@ final class Screen {
         }
     }
 
-    /** Replaces the text of the focused input field (else the first one on screen). */
-    static JSONObject type(UiAutomation automation, String text) throws JSONException {
+    /**
+     * Replaces the text of the focused input field (else the first one on screen); submit then
+     * runs the field's IME action (search, go). Keys cannot do that: while an on-screen keyboard
+     * is up, ENTER and DPAD_CENTER type its highlighted key.
+     */
+    static JSONObject type(UiAutomation automation, String text, boolean submit) throws JSONException {
         AccessibilityNodeInfo target = null;
         for (Item item : items(root(automation))) {
             if (item.editable && (target == null || item.focused)) {
@@ -250,7 +255,14 @@ final class Screen {
         }
         Bundle args = new Bundle();
         args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
-        boolean ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
-        return ok ? new JSONObject().put("ok", true) : new JSONObject().put("ok", false).put("error", "输入框不接受文字");
+        if (!target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+            return new JSONObject().put("ok", false).put("error", "输入框不接受文字");
+        }
+        JSONObject result = new JSONObject().put("ok", true);
+        if (submit) {
+            result.put("submitted", Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && target.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId()));
+        }
+        return result;
     }
 }
