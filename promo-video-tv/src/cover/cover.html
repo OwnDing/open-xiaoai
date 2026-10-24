@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>遥控器退休了 cover</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #000; overflow: hidden; }
+  body { font-family: "PingFang SC", sans-serif; color: #fff; -webkit-font-smoothing: antialiased; }
+  #c { position: relative; overflow: hidden; }
+  #bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  /* darken the left so the type reads at thumbnail size */
+  #shade { position: absolute; inset: 0;
+    background: radial-gradient(ellipse 54% 50% at 27% 42%, rgba(6,3,12,0.82) 0%, rgba(6,3,12,0.55) 55%, rgba(6,3,12,0) 100%),
+                linear-gradient(100deg, rgba(8,4,14,0.7) 0%, rgba(8,4,14,0.35) 40%, rgba(8,4,14,0) 62%); }
+  #t { position: absolute; }
+  .kicker { display: inline-block; font-size: 34px; font-weight: 600; letter-spacing: 6px; padding: 10px 22px;
+    border-radius: 40px; background: rgba(255,255,255,0.14); border: 2px solid rgba(255,255,255,0.55); }
+  .pre { font-weight: 600; letter-spacing: 4px; margin-top: 34px; text-shadow: 0 4px 18px rgba(0,0,0,0.6); }
+  .big { font-weight: 600; letter-spacing: 6px; line-height: 1.12; text-shadow: 0 6px 26px rgba(0,0,0,0.55); }
+  .grad { background: linear-gradient(100deg, #ffd59a 0%, #ff9fbb 48%, #c9b3ff 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 0 2px rgba(40,10,40,0.9)) drop-shadow(0 6px 22px rgba(0,0,0,0.75)); }
+  .chips { display: flex; gap: 18px; margin-top: 40px; flex-wrap: wrap; }
+  .chips span { font-size: 34px; font-weight: 600; letter-spacing: 3px; padding: 12px 24px; border-radius: 14px;
+    background: rgba(12,8,20,0.6); border: 2px solid rgba(255,190,140,0.75); }
+  .chips span b { color: #ffc27a; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="c">
+  <img id="bg">
+  <div id="shade"></div>
+  <div id="t">
+    <div class="kicker">开源 · 小七接管电视</div>
+    <div class="pre">智能家居只会开关电视？</div>
+    <div class="big">遥控器</div>
+    <div class="big grad">退休了</div>
+    <div class="chips"><span>开机 · 找片 · <b>选集</b></span><span>浏览器 · <b>音乐 App</b></span><span>一句话 <b>全搞定</b></span></div>
+  </div>
+</div>
+<script>
+  // ?w=1920&h=1080&bg=...&x=..&y=..&pre=..&big=..
+  const q = new URLSearchParams(location.search);
+  const W = +q.get('w'), H = +q.get('h');
+  const c = document.getElementById('c');
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  document.getElementById('bg').src = q.get('bg');
+  const t = document.getElementById('t');
+  t.style.left = q.get('x') + 'px'; t.style.top = q.get('y') + 'px';
+  document.querySelector('.pre').style.fontSize = q.get('pre') + 'px';
+  document.querySelectorAll('.big').forEach((e) => { e.style.fontSize = q.get('big') + 'px'; });
+</script>
+</body>
+</html>
