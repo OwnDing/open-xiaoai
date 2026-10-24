@@ -124,7 +124,7 @@
 - **不和放歌抢**：“播放梁静茹的歌”还是在音箱上放歌；只说“播放狂飙”、曲库里又没有，就交给小七去电视上找。
 - **说了要做到**：提到电视的请求，没调用电视工具就说“开了”“关了”的回答会被拦下重做。
 
-电视上跑的不是普通 App：TCL 不让第三方 App 在后台常驻（进入后台约 5 秒就被冻结），也不让用 adb 安装，所以助手像 scrcpy 一样由 adb 在电视上运行。电视重启后小七会自动把它拉起来，平时待机不影响。目前在 TCL 雷鸟（Android 11）上验收，奇异果是 TCL 版银河奇异果。👉 [小七电视助手（含 TCL 系统限制的调查记录）](deploy/tv-helper/README.md)
+电视上跑的不是普通 App：TCL 不让第三方 App 在后台常驻（进入后台约 5 秒就被冻结），也不让用 adb 安装，所以助手像 scrcpy 一样由 adb 在电视上运行。电视重启后小七会自动把它拉起来，平时待机不影响。目前在 TCL 雷鸟（Android 11）上验收，奇异果是 TCL 版银河奇异果。👉 [小七电视助手（含 TCL 系统限制的调查记录）](deploy/tv-helper/README.md) · [视频：遥控器可以退休了，让小爱音箱接管整台电视](https://www.bilibili.com/video/BV1zJHK6gEyE)
 
 ### 安全边界
 
@@ -203,6 +203,12 @@
 目前在 Windows 11 mini PC + 京鱼座蓝牙小黑胶上验收。这台音箱的麦克风只有 8 kHz 通话音质，近距离可用，远场一般；换 USB 会议麦克风效果更好。👉 [电脑语音终端](examples/voice-terminal/README.md) · [多终端方案与测试记录](docs/cross-platform-voice-terminal-plan.md) · [视频：一台小主机 + 一个音箱，DIY AI 家庭管家](https://www.bilibili.com/video/BV1BTpL6AEPC)
 
 ## 演示视频
+
+👉 [遥控器可以退休了！让小爱音箱接管整台电视｜说片名就播、自动选集、快进切集、网易云、浏览器](https://www.bilibili.com/video/BV1zJHK6gEyE)
+
+[![](./promo-video-tv/output/cover_16x9.jpg)](https://www.bilibili.com/video/BV1zJHK6gEyE)
+
+智能家居对电视大多只能开机、关机，剩下的还得靠遥控器一下下按。小七在电视上多了一个开源的电视助手：读一次整块屏幕不到 0.3 秒，能打字、点按钮、按遥控键、控制播放；开机借小爱音箱的红外，其余操作全走家里的局域网。找片选集、快进切集、网易云每日推荐、浏览器搜索，都交给一句话。分镜与源码见 [`promo-video-tv/`](promo-video-tv/README.md)。
 
 👉 [【开源】一台小主机+一个音箱，DIY全网最聪明的AI家庭管家｜米家海尔一起管，声音不出家门](https://www.bilibili.com/video/BV1BTpL6AEPC)
 
