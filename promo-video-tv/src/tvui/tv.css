@@ -1,0 +1,237 @@
+/* The TV's own screens (1920 x 1080): launcher, video app, music app, browser, other brands. */
+:root {
+  --qy: #1ed760;          /* video app accent */
+  --ne: #ec4141;          /* music app accent */
+  --ink: rgba(255, 255, 255, 0.95);
+  --dim: rgba(255, 255, 255, 0.6);
+  --faint: rgba(255, 255, 255, 0.35);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1920px; height: 1080px; background: #000; overflow: hidden; }
+body { font-family: "PingFang SC", "Hiragino Sans GB", sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+.en { font-family: "Avenir Next", "PingFang SC", sans-serif; }
+#tv { position: absolute; inset: 0; overflow: hidden; background: #000; }
+.page { position: absolute; inset: 0; overflow: hidden; display: none; }
+.abs { position: absolute; }
+canvas.fill { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+#power { position: absolute; inset: 0; background: #000; pointer-events: none; }
+#boot { position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse 40% 40% at 50% 50%, rgba(170,200,255,0.55), rgba(40,60,110,0.25) 50%, rgba(0,0,0,0) 80%), #000; }
+#boot .logo { position: absolute; left: 50%; top: 50%; width: 150px; height: 150px; margin: -75px; border-radius: 50%;
+  border: 6px solid rgba(255,255,255,0.9); box-shadow: 0 0 60px rgba(160,200,255,0.8); }
+#boot .logo::after { content: ""; position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px; border-radius: 50%; background: #fff; }
+
+/* ---------------------------------------------------------------- launcher */
+.launcher { background: radial-gradient(ellipse 90% 80% at 30% 20%, #1d2a40 0%, #0b1019 60%, #05070b 100%); }
+.topbar { position: absolute; left: 80px; right: 80px; top: 44px; display: flex; justify-content: space-between; align-items: center; font-size: 30px; color: var(--dim); }
+.topbar .clock { font-family: "Avenir Next"; font-size: 40px; font-weight: 500; color: var(--ink); letter-spacing: 1px; }
+.topbar .r { display: flex; align-items: center; gap: 28px; }
+.hero { position: absolute; border-radius: 26px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+.hero img, .hero canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.hero .shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(4,10,16,0.85) 0%, rgba(4,10,16,0.35) 45%, rgba(0,0,0,0) 70%); }
+.hero .txt { position: absolute; left: 64px; bottom: 60px; }
+.chip { display: inline-block; font-size: 24px; padding: 6px 16px; border-radius: 10px; background: var(--qy); color: #032; font-weight: 600; letter-spacing: 2px; }
+.hero .t { font-size: 104px; font-weight: 600; letter-spacing: 12px; margin-top: 16px; text-shadow: 0 4px 30px rgba(0,0,0,0.6); }
+.hero .s { font-size: 30px; color: rgba(255,255,255,0.8); margin-top: 10px; letter-spacing: 3px; }
+.side-card { position: absolute; border-radius: 22px; overflow: hidden; }
+.side-card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.side-card .cap { position: absolute; left: 26px; bottom: 22px; font-size: 32px; font-weight: 600; text-shadow: 0 2px 14px rgba(0,0,0,0.8); }
+.side-card .cap small { display: block; font-size: 21px; font-weight: 400; color: var(--dim); margin-top: 4px; }
+.row-label { position: absolute; font-size: 30px; color: var(--dim); letter-spacing: 3px; }
+.tiles { position: absolute; display: flex; gap: 30px; }
+.tile { width: 220px; height: 176px; border-radius: 24px; background: rgba(255,255,255,0.08); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px; font-size: 26px; letter-spacing: 1px; position: relative; transition: none; }
+.tile .ic { width: 84px; height: 84px; border-radius: 22px; display: grid; place-items: center; }
+.tile .ic svg { width: 50px; height: 50px; }
+.focus { outline: 5px solid #fff; outline-offset: 2px; box-shadow: 0 0 40px rgba(255,255,255,0.35); }
+.press { position: absolute; inset: 0; border-radius: inherit; background: rgba(255,255,255,0.0); pointer-events: none; }
+
+/* ---------------------------------------------------------------- video app */
+.vapp { background: #0c0f12; }
+.vbar { position: absolute; left: 70px; right: 70px; top: 40px; height: 80px; display: flex; align-items: center; gap: 46px; }
+.vbar .logo { display: flex; align-items: center; gap: 14px; font-size: 34px; font-weight: 600; margin-right: 30px; }
+.vbar .logo i { width: 54px; height: 54px; border-radius: 16px; background: var(--qy); display: grid; place-items: center; }
+.vbar .logo i svg { width: 30px; height: 30px; }
+.vbar .tab { font-size: 32px; color: var(--dim); padding: 8px 18px; border-radius: 30px; position: relative; display: flex; align-items: center; gap: 10px; }
+.vbar .tab.on { color: #fff; font-weight: 600; }
+.vbar .tab.on::after { content: ""; position: absolute; left: 30%; right: 30%; bottom: -8px; height: 5px; border-radius: 3px; background: var(--qy); }
+.vbar .tab.focus { background: #fff; color: #0c0f12; outline: none; }
+.vbar .tab svg { width: 30px; height: 30px; }
+.posters { position: absolute; display: flex; gap: 30px; }
+.poster { width: 246px; }
+.poster .im { width: 246px; height: 344px; border-radius: 18px; overflow: hidden; position: relative; background: #222; }
+.poster .im img { width: 100%; height: 100%; display: block; }
+.poster .tt { font-size: 27px; margin-top: 14px; letter-spacing: 1px; }
+.poster .mt { font-size: 20px; color: var(--faint); margin-top: 4px; }
+.badge { position: absolute; right: 10px; top: 10px; font-size: 18px; padding: 3px 10px; border-radius: 8px; background: var(--qy); color: #032; font-weight: 600; }
+
+/* search */
+.vsearch .field { position: absolute; left: 80px; top: 160px; width: 600px; height: 96px; border-radius: 22px; background: rgba(255,255,255,0.1);
+  display: flex; align-items: center; gap: 18px; padding: 0 28px; font-size: 44px; letter-spacing: 6px; }
+.vsearch .field svg { width: 40px; height: 40px; color: var(--dim); }
+.vsearch .field .ph { color: var(--faint); font-size: 30px; letter-spacing: 2px; }
+.vsearch .field .caret { width: 3px; height: 50px; background: var(--qy); margin-left: -12px; }
+.vsearch .hint { position: absolute; left: 84px; top: 274px; font-size: 24px; color: var(--faint); letter-spacing: 2px; }
+.kb { position: absolute; left: 80px; top: 330px; display: grid; grid-template-columns: repeat(6, 88px); gap: 14px; }
+.kb .k { height: 88px; border-radius: 16px; background: rgba(255,255,255,0.07); display: grid; place-items: center; font-family: "Avenir Next"; font-size: 38px; font-weight: 500; }
+.kb .k.focus { background: #fff; color: #0c0f12; outline: none; box-shadow: 0 0 30px rgba(255,255,255,0.4); }
+.kb2 { position: absolute; left: 80px; top: 950px; display: flex; gap: 14px; }
+.kb2 .k { width: 291px; height: 70px; border-radius: 16px; background: rgba(255,255,255,0.07); display: grid; place-items: center; font-size: 26px; color: var(--dim); }
+.res-h { position: absolute; left: 780px; top: 170px; font-size: 34px; font-weight: 600; letter-spacing: 3px; }
+.res-h small { font-size: 24px; color: var(--faint); font-weight: 400; margin-left: 16px; letter-spacing: 1px; }
+.results { position: absolute; left: 780px; top: 250px; display: grid; grid-template-columns: 520px 520px; gap: 30px; }
+.rcard { height: 330px; border-radius: 24px; background: rgba(255,255,255,0.06); display: flex; gap: 26px; padding: 22px; position: relative; }
+.rcard .im { width: 200px; height: 286px; border-radius: 14px; overflow: hidden; flex: none; }
+.rcard .im img { width: 100%; height: 100%; display: block; }
+.rcard .tt { font-size: 42px; font-weight: 600; letter-spacing: 4px; margin-top: 8px; }
+.rcard .mt { font-size: 22px; color: var(--dim); margin-top: 12px; line-height: 1.6; }
+.rcard .play { margin-top: 26px; display: inline-flex; align-items: center; gap: 10px; font-size: 28px; padding: 12px 30px; border-radius: 40px; background: rgba(255,255,255,0.12); position: relative; }
+.rcard .play.focus { background: var(--qy); color: #032; font-weight: 600; outline: none; box-shadow: 0 0 34px rgba(30,215,96,0.55); }
+.rcard.focus { outline: 5px solid #fff; }
+.hot { position: absolute; left: 780px; top: 250px; font-size: 32px; line-height: 2.1; color: var(--dim); }
+.hot b { display: inline-block; width: 50px; color: var(--qy); font-family: "Avenir Next"; }
+
+/* detail */
+.vdetail .back { position: absolute; inset: 0; }
+.vdetail .shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(6,10,14,0.96) 0%, rgba(6,10,14,0.75) 40%, rgba(6,10,14,0.15) 75%), linear-gradient(0deg, rgba(6,10,14,0.95) 0%, rgba(6,10,14,0) 45%); }
+.vdetail .t { position: absolute; left: 100px; top: 150px; font-size: 128px; font-weight: 600; letter-spacing: 18px; }
+.vdetail .meta { position: absolute; left: 104px; top: 330px; font-size: 28px; color: var(--dim); letter-spacing: 2px; }
+.vdetail .meta b { color: #ffc65c; font-family: "Avenir Next"; font-weight: 600; margin-right: 18px; }
+.vdetail .syn { position: absolute; left: 104px; top: 396px; width: 900px; font-size: 30px; line-height: 1.7; color: rgba(255,255,255,0.78); }
+.btns { position: absolute; left: 100px; top: 560px; display: flex; gap: 26px; }
+.btn { font-size: 32px; padding: 18px 44px; border-radius: 50px; background: rgba(255,255,255,0.14); display: flex; align-items: center; gap: 12px; position: relative; }
+.btn.focus { background: var(--qy); color: #032; font-weight: 600; outline: none; box-shadow: 0 0 40px rgba(30,215,96,0.5); }
+.eps-l { position: absolute; left: 104px; top: 730px; font-size: 30px; color: var(--dim); letter-spacing: 3px; }
+.eps { position: absolute; left: 100px; top: 790px; display: flex; gap: 18px; }
+.ep { width: 112px; height: 84px; border-radius: 16px; background: rgba(255,255,255,0.1); display: grid; place-items: center; font-family: "Avenir Next"; font-size: 36px; font-weight: 500; position: relative; }
+.ep.focus { background: #fff; color: #0c0f12; outline: none; box-shadow: 0 0 30px rgba(255,255,255,0.45); }
+.ep.cur::after { content: ""; position: absolute; bottom: 8px; left: 40%; right: 40%; height: 4px; border-radius: 2px; background: var(--qy); }
+
+/* player overlays */
+.pl-title { position: absolute; left: 80px; top: 56px; font-size: 40px; font-weight: 600; letter-spacing: 3px; text-shadow: 0 2px 16px rgba(0,0,0,0.8); padding: 6px 4px; }
+.pl-title small { font-size: 26px; font-weight: 400; color: var(--dim); margin-left: 18px; }
+.pl-grad-t { position: absolute; left: 0; right: 0; top: 0; height: 240px; background: linear-gradient(180deg, rgba(0,0,0,0.6), rgba(0,0,0,0)); }
+.pl-grad-b { position: absolute; left: 0; right: 0; bottom: 0; height: 340px; background: linear-gradient(0deg, rgba(0,0,0,0.8), rgba(0,0,0,0)); }
+.pl-prog { position: absolute; left: 80px; right: 80px; bottom: 70px; height: 70px; }
+.pl-prog .bar { position: absolute; left: 0; right: 290px; top: 30px; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.25); }
+.pl-prog .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--qy); }
+.pl-prog .knob { position: absolute; top: -10px; width: 28px; height: 28px; margin-left: -14px; border-radius: 50%; background: #fff; box-shadow: 0 0 16px rgba(255,255,255,0.6); }
+.pl-prog .tm { position: absolute; right: 0; top: 10px; font-family: "Avenir Next"; font-size: 36px; font-weight: 500; letter-spacing: 1px; }
+.pl-prog .tm span { color: var(--dim); }
+.pl-panel { position: absolute; left: 0; right: 0; bottom: 0; height: 300px; background: linear-gradient(0deg, rgba(4,6,8,0.92), rgba(4,6,8,0.6)); }
+.pl-panel .l { position: absolute; left: 80px; top: 50px; font-size: 32px; letter-spacing: 3px; }
+.pl-panel .eps { left: 80px; top: 120px; }
+.pl-toast { position: absolute; right: 80px; top: 60px; font-size: 34px; padding: 18px 34px; border-radius: 20px; background: rgba(10,12,14,0.78); border: 2px solid rgba(255,255,255,0.18); letter-spacing: 2px; }
+.pl-toast b { color: var(--qy); }
+.pl-vol { position: absolute; right: 90px; top: 300px; width: 110px; height: 480px; border-radius: 30px; background: rgba(10,12,14,0.75); }
+.pl-vol .bar { position: absolute; left: 47px; top: 40px; width: 16px; height: 330px; border-radius: 8px; background: rgba(255,255,255,0.2); overflow: hidden; }
+.pl-vol .fill { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; border-radius: 8px; }
+.pl-vol .n { position: absolute; left: 0; right: 0; top: 392px; text-align: center; font-family: "Avenir Next"; font-size: 44px; font-weight: 600; }
+.pl-pause { position: absolute; left: 50%; top: 50%; width: 180px; height: 180px; margin: -90px; border-radius: 50%; background: rgba(0,0,0,0.5); display: grid; place-items: center; }
+.pl-pause svg { width: 90px; height: 90px; }
+.pl-seek { position: absolute; left: 50%; top: 50%; margin-left: -170px; margin-top: -60px; width: 340px; height: 120px; border-radius: 60px; background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center; gap: 18px; font-family: "Avenir Next"; font-size: 50px; font-weight: 600; }
+.pl-seek svg { width: 60px; height: 60px; }
+
+/* ---------------------------------------------------------------- music app */
+.music { background: linear-gradient(160deg, #1d1416 0%, #121214 45%, #0d0d0f 100%); }
+.m-side { position: absolute; left: 0; top: 0; bottom: 0; width: 330px; background: rgba(255,255,255,0.03); padding: 60px 0 0 54px; }
+.m-logo { display: flex; align-items: center; gap: 16px; font-size: 32px; font-weight: 600; }
+.m-logo i { width: 58px; height: 58px; border-radius: 50%; background: var(--ne); display: grid; place-items: center; }
+.m-logo i svg { width: 32px; height: 32px; }
+.m-menu { margin-top: 70px; font-size: 30px; color: var(--dim); line-height: 2.5; }
+.m-menu .on { color: #fff; font-weight: 600; }
+.m-menu .on::before { content: ""; display: inline-block; width: 6px; height: 30px; background: var(--ne); border-radius: 3px; margin: 0 18px 0 -24px; vertical-align: -4px; }
+.m-h { position: absolute; left: 410px; top: 70px; font-size: 44px; font-weight: 600; letter-spacing: 3px; }
+.m-tiles { position: absolute; left: 410px; top: 170px; display: grid; grid-template-columns: 560px 400px 400px; gap: 34px; }
+.m-tile { height: 400px; border-radius: 28px; overflow: hidden; position: relative; }
+.m-tile .lb { position: absolute; left: 34px; bottom: 30px; font-size: 40px; font-weight: 600; letter-spacing: 2px; }
+.m-tile .lb small { display: block; font-size: 23px; font-weight: 400; color: rgba(255,255,255,0.75); margin-top: 8px; letter-spacing: 1px; }
+.m-tile .date { position: absolute; left: 34px; top: 30px; font-family: "Avenir Next"; font-size: 120px; font-weight: 600; line-height: 1; }
+.m-row { position: absolute; left: 410px; top: 640px; display: flex; gap: 34px; }
+.m-card { width: 260px; }
+.m-card .im { width: 260px; height: 260px; border-radius: 22px; overflow: hidden; }
+.m-card .im img { width: 100%; height: 100%; display: block; }
+.m-card .tt { font-size: 25px; margin-top: 14px; color: rgba(255,255,255,0.85); line-height: 1.4; }
+.m-list-h { position: absolute; left: 410px; top: 80px; display: flex; gap: 46px; align-items: flex-end; }
+.m-list-h .cov { width: 300px; height: 300px; border-radius: 26px; overflow: hidden; }
+.m-list-h .cov img { width: 100%; height: 100%; display: block; }
+.m-list-h .t { font-size: 72px; font-weight: 600; letter-spacing: 6px; }
+.m-list-h .s { font-size: 27px; color: var(--dim); margin-top: 14px; letter-spacing: 2px; }
+.m-list-h .acts { display: flex; gap: 24px; margin-top: 40px; }
+.m-btn { font-size: 32px; padding: 18px 42px; border-radius: 50px; background: rgba(255,255,255,0.12); display: flex; align-items: center; gap: 14px; position: relative; }
+.m-btn.red { background: var(--ne); font-weight: 600; }
+.m-btn.focus { outline: 5px solid #fff; outline-offset: 3px; box-shadow: 0 0 40px rgba(236,65,65,0.6); }
+.m-songs { position: absolute; left: 410px; top: 440px; right: 90px; }
+.m-song { display: flex; align-items: center; height: 92px; border-radius: 18px; padding: 0 30px; font-size: 32px; gap: 30px; }
+.m-song:nth-child(odd) { background: rgba(255,255,255,0.03); }
+.m-song .n { width: 50px; font-family: "Avenir Next"; color: var(--faint); }
+.m-song .a { color: var(--dim); font-size: 26px; margin-left: auto; }
+.m-song.cur { color: var(--ne); }
+.m-player .bg { position: absolute; inset: -60px; filter: blur(70px) saturate(1.3) brightness(0.55); }
+.m-player .bg img { width: 100%; height: 100%; }
+.m-disc { position: absolute; left: 230px; top: 160px; width: 700px; height: 700px; border-radius: 50%;
+  background: radial-gradient(circle, #111 0%, #222 38%, #0a0a0a 40%, #1a1a1a 60%, #0c0c0c 100%); box-shadow: 0 30px 90px rgba(0,0,0,0.6); }
+.m-disc .cov { position: absolute; left: 115px; top: 115px; width: 470px; height: 470px; border-radius: 50%; overflow: hidden; }
+.m-disc .cov img { width: 100%; height: 100%; display: block; }
+.m-now { position: absolute; left: 1080px; top: 190px; }
+.m-now .t { font-size: 64px; font-weight: 600; letter-spacing: 6px; }
+.m-now .a { font-size: 30px; color: var(--dim); margin-top: 14px; letter-spacing: 2px; }
+.m-lyr { position: absolute; left: 1080px; top: 380px; font-size: 36px; line-height: 2.1; color: rgba(255,255,255,0.35); letter-spacing: 3px; }
+.m-lyr .cur { color: #fff; font-size: 42px; font-weight: 600; }
+.m-prog { position: absolute; left: 1080px; right: 140px; top: 900px; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.2); }
+.m-prog .fill { position: absolute; left: 0; top: 0; bottom: 0; background: #fff; border-radius: 4px; }
+.m-prog .tm { position: absolute; left: 0; right: 0; top: 24px; display: flex; justify-content: space-between; font-family: "Avenir Next"; font-size: 26px; color: var(--dim); }
+
+/* ---------------------------------------------------------------- browser */
+.browser { background: #f4f5f7; color: #1d1f23; }
+.b-tabs { position: absolute; left: 0; right: 0; top: 0; height: 64px; background: #dfe2e7; display: flex; align-items: flex-end; padding-left: 40px; gap: 6px; }
+.b-tab { height: 52px; padding: 0 30px; border-radius: 14px 14px 0 0; background: #f4f5f7; display: flex; align-items: center; gap: 12px; font-size: 22px; color: #333; }
+.b-addr { position: absolute; left: 40px; right: 40px; top: 80px; height: 74px; border-radius: 37px; background: #fff; border: 2px solid #d7dbe2;
+  display: flex; align-items: center; gap: 18px; padding: 0 32px; font-size: 30px; color: #8a9099; }
+.b-addr.focus { border-color: #2f6df6; box-shadow: 0 0 0 5px rgba(47,109,246,0.2); color: #1d1f23; }
+.b-addr svg { width: 32px; height: 32px; flex: none; }
+.b-addr .caret { width: 3px; height: 40px; background: #2f6df6; margin-left: -14px; }
+.b-home .logo { position: absolute; left: 0; right: 0; top: 300px; text-align: center; font-size: 120px; font-weight: 600; letter-spacing: 30px; text-indent: 30px;
+  background: linear-gradient(100deg, #2f6df6, #19b6c9 60%, #36c26b); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.b-home .box { position: absolute; left: 460px; right: 460px; top: 480px; height: 92px; border-radius: 46px; background: #fff; box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+  display: flex; align-items: center; padding: 0 40px; font-size: 30px; color: #9aa0a8; gap: 16px; }
+.b-home .box svg { width: 36px; height: 36px; }
+.b-quick { position: absolute; left: 0; right: 0; top: 660px; display: flex; justify-content: center; gap: 60px; }
+.b-quick div { width: 140px; text-align: center; font-size: 24px; color: #555; }
+.b-quick i { display: block; width: 110px; height: 110px; margin: 0 auto 16px; border-radius: 28px; }
+.b-res { position: absolute; left: 0; right: 0; top: 170px; bottom: 0; background: #fff; }
+.b-res .sbar { position: absolute; left: 90px; top: 34px; width: 900px; height: 76px; border-radius: 38px; border: 2px solid #d7dbe2; display: flex; align-items: center; padding: 0 34px; font-size: 32px; gap: 16px; }
+.b-res .sbar svg { width: 34px; height: 34px; color: #2f6df6; }
+.b-res .stabs { position: absolute; left: 120px; top: 136px; display: flex; gap: 50px; font-size: 26px; color: #666; }
+.b-res .stabs .on { color: #2f6df6; font-weight: 600; border-bottom: 4px solid #2f6df6; padding-bottom: 10px; }
+.b-items { position: absolute; left: 120px; top: 220px; width: 1000px; }
+.b-item { margin-bottom: 44px; display: flex; gap: 30px; }
+.b-item .tx { flex: 1; }
+.b-item .u { font-size: 21px; color: #2e7d32; }
+.b-item .h { font-size: 33px; color: #1a4fd6; margin-top: 6px; line-height: 1.35; }
+.b-item .p { font-size: 23px; color: #555; margin-top: 10px; line-height: 1.6; }
+.b-item .th { width: 230px; height: 150px; border-radius: 14px; overflow: hidden; flex: none; }
+.b-item .th img { width: 100%; height: 100%; display: block; }
+.b-card { position: absolute; left: 1220px; top: 60px; width: 620px; border-radius: 26px; border: 2px solid #e4e7ec; overflow: hidden; background: #fff; }
+.b-card .im { height: 300px; }
+.b-card .im img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.b-card .bd { padding: 26px 34px; }
+.b-card .t { font-size: 42px; font-weight: 600; }
+.b-card .s { font-size: 22px; color: #777; margin-top: 6px; }
+.b-card .h2 { font-size: 26px; font-weight: 600; margin-top: 20px; }
+.b-card .ing { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.b-card .ing span { font-size: 21px; padding: 6px 14px; border-radius: 10px; background: #f1f3f6; }
+.b-card ol { margin: 12px 0 0 30px; font-size: 22px; line-height: 1.75; color: #333; }
+.b-load { position: absolute; left: 0; top: 168px; height: 5px; background: #2f6df6; }
+
+/* ---------------------------------------------------------------- other brands (pain 03) */
+.brand { position: absolute; inset: 0; }
+.brand .bg { position: absolute; inset: 0; }
+.brand .grid { position: absolute; left: 90px; top: 170px; display: grid; gap: 30px; }
+.brand .cell { border-radius: 20px; }
+.brand .bt { position: absolute; left: 90px; top: 60px; font-size: 40px; font-weight: 600; letter-spacing: 4px; }
+.brand .voice { position: absolute; left: 50%; bottom: 80px; transform: translateX(-50%); display: flex; align-items: center; gap: 28px;
+  padding: 28px 54px; border-radius: 70px; background: rgba(0,0,0,0.72); border: 2px solid rgba(255,255,255,0.25); font-size: 44px; white-space: nowrap; letter-spacing: 2px; }
+.brand .voice i { width: 80px; height: 80px; border-radius: 50%; display: grid; place-items: center; }
+.brand .voice i svg { width: 46px; height: 46px; }

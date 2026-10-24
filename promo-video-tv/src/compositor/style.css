@@ -1,0 +1,295 @@
+:root {
+  --amber: #ffb36b;
+  --rose: #ff6f8e;
+  --violet: #9b7bff;
+  --cold: #9cc8ff;
+  --ink: rgba(255, 255, 255, 0.94);
+  --dim: rgba(255, 255, 255, 0.62);
+  --glass: rgba(18, 18, 24, 0.55);
+  --grad: linear-gradient(100deg, #ffb36b 0%, #ff6f8e 48%, #9b7bff 100%);
+  --mi: #ff8a3d;
+  --haier: #3d9bff;
+  --bx: #3ccf8e;
+  --by: #c77dff;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1920px; height: 1080px; background: #000; overflow: hidden; }
+body {
+  font-family: "PingFang SC", "Hiragino Sans GB", sans-serif;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+#stage { position: absolute; inset: 0; overflow: hidden; background: #000; }
+.layer { position: absolute; inset: 0; pointer-events: none; }
+.en { font-family: "Avenir Next", "PingFang SC", sans-serif; }
+
+/* plate area: 1920 x 800 between the bars */
+#plates { top: 140px; height: 800px; bottom: auto; overflow: hidden; }
+.plate { position: absolute; left: 0; top: 0; width: 1920px; height: 800px; object-fit: cover; transform-origin: 50% 50%; }
+#grade { top: 140px; height: 800px; bottom: auto; }
+#tint { position: absolute; inset: 0; }
+#vignette {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 75% 85% at 50% 50%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.5) 100%);
+}
+#pov { top: 140px; height: 800px; bottom: auto; }
+.bar { position: absolute; left: 0; right: 0; height: 140px; background: #000; }
+.bar.top { top: 0; }
+.bar.bot { bottom: 0; }
+#flash { background: #fff; opacity: 0; }
+#black { background: #000; opacity: 0; }
+
+/* ---------------------------------------------------------------- subtitles (in the lower bar) */
+#subs { top: auto; bottom: 0; height: 140px; display: flex; align-items: center; justify-content: center; }
+.sub {
+  display: flex; align-items: center; gap: 16px;
+  font-size: 36px; letter-spacing: 2px; font-weight: 400; color: rgba(255,255,255,0.93);
+  white-space: nowrap;
+}
+.sub .who {
+  font-size: 22px; letter-spacing: 3px; padding: 4px 12px 5px; border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.28); color: rgba(255,255,255,0.75);
+}
+.sub .who.xiaoqi { border: none; color: #fff; background: var(--grad); }
+.sub .who.generic { border-color: rgba(156,200,255,0.5); color: var(--cold); }
+
+/* ---------------------------------------------------------------- device tags */
+svg.lines { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; }
+.pin {
+  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 14px 4px rgba(255,190,120,0.55);
+}
+.pin .ring { position: absolute; inset: -6px; border: 1.5px solid rgba(255,255,255,0.8); border-radius: 50%; }
+.tag {
+  position: absolute; display: flex; align-items: center; gap: 14px;
+  padding: 12px 18px 12px 14px; border-radius: 16px;
+  background: rgba(16, 14, 20, 0.58); backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,255,255,0.14);
+  font-size: 24px; white-space: nowrap; box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+}
+.tag .ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: rgba(255,255,255,0.08); }
+.tag .ico svg { width: 24px; height: 24px; }
+.tag .brand { font-size: 17px; letter-spacing: 1px; color: var(--dim); margin-top: 2px; }
+.tag .ok {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  background: #3ccf8e; color: #082; font-size: 18px; font-weight: 700; color: #fff;
+}
+.tag .ok.warn { background: #ff9f43; }
+.tag.big { font-size: 28px; padding: 16px 22px 16px 16px; }
+
+/* ---------------------------------------------------------------- titles and cards */
+.title-main {
+  position: absolute; left: 0; right: 0; top: 168px; text-align: center;
+  font-size: 120px; font-weight: 600; letter-spacing: 34px; text-indent: 34px;
+  background: linear-gradient(100deg, #fff 0%, #ffe2c4 40%, #ffb36b 60%, #fff 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: 0 0 60px rgba(255, 170, 110, 0.25);
+}
+.title-sub {
+  position: absolute; left: 0; right: 0; top: 352px; text-align: center;
+  font-size: 32px; letter-spacing: 10px; color: rgba(255,255,255,0.92); font-weight: 400;
+  text-shadow: 0 2px 14px rgba(0,0,0,0.9), 0 0 4px rgba(0,0,0,0.6);
+}
+.title-line { position: absolute; left: 50%; top: 334px; height: 1px; width: 520px; margin-left: -260px; background: linear-gradient(90deg, transparent, rgba(255,200,160,0.8), transparent); }
+
+.pain {
+  position: absolute; left: 130px; top: 360px; color: #e9f2ff;
+}
+.pain .num { font-family: "Avenir Next"; font-weight: 200; font-size: 150px; line-height: 1; color: rgba(156,200,255,0.9); letter-spacing: -4px; }
+.pain .ttl { font-size: 72px; font-weight: 600; letter-spacing: 10px; margin-top: 8px; }
+.pain .s { font-size: 30px; letter-spacing: 4px; color: rgba(220,232,255,0.75); margin-top: 18px; }
+.pain .pline { width: 0; height: 2px; background: var(--cold); margin-top: 22px; }
+
+.slam {
+  position: absolute; top: 470px; font-size: 92px; font-weight: 600; letter-spacing: 12px; color: #e8f1ff;
+  text-shadow: 0 0 30px rgba(120,170,255,0.5);
+  transform-origin: 50% 50%;
+}
+.point { position: absolute; left: 960px; top: 540px; width: 10px; height: 10px; margin: -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 30px 12px rgba(255,200,150,0.8); }
+
+.claim {
+  position: absolute; left: 0; right: 0; text-align: center; font-size: 76px; font-weight: 600; letter-spacing: 16px;
+  background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+.kicker { font-size: 26px; letter-spacing: 6px; color: var(--amber); }
+.big-label { position: absolute; }
+.big-label .n {
+  font-family: "Avenir Next"; font-weight: 200; font-size: 120px; line-height: 1;
+  background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.big-label .h { font-size: 56px; font-weight: 600; letter-spacing: 6px; margin-top: 10px; }
+.big-label .d { font-size: 28px; letter-spacing: 3px; color: var(--dim); margin-top: 16px; text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
+.big-label .chips { display: flex; gap: 12px; margin-top: 20px; }
+.big-label .chips span { font-size: 22px; padding: 8px 16px; border-radius: 22px; border: 1px solid rgba(255,255,255,0.25); color: rgba(255,255,255,0.85); }
+
+.num-badge {
+  position: absolute; width: 64px; height: 64px; margin: -32px; border-radius: 50%;
+  display: grid; place-items: center; font-family: "Avenir Next"; font-size: 34px; font-weight: 500;
+  border: 1.5px solid rgba(255,220,190,0.8); color: #fff; background: rgba(0,0,0,0.25);
+}
+
+.toptitle {
+  position: absolute; left: 110px; top: 190px; font-size: 52px; font-weight: 600; letter-spacing: 6px;
+}
+.toptitle .g { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.toptitle .k { display: block; font-size: 22px; font-weight: 400; letter-spacing: 6px; color: var(--dim); margin-bottom: 14px; }
+
+.corner {
+  position: absolute; right: 70px; top: 176px; font-size: 22px; letter-spacing: 3px; padding: 8px 16px;
+  border-radius: 8px; border: 1px solid rgba(255,255,255,0.35); color: rgba(255,255,255,0.85); background: rgba(0,0,0,0.25);
+}
+.corner b { color: var(--amber); font-weight: 500; }
+
+.timecard { position: absolute; left: 110px; top: 200px; }
+.timecard .t { font-size: 80px; font-weight: 600; letter-spacing: 10px; }
+.timecard .s { font-size: 24px; letter-spacing: 6px; color: var(--dim); margin-top: 6px; }
+
+/* ---------------------------------------------------------------- app silos */
+.silo {
+  position: absolute; border-radius: 50%; border: 2px solid; margin: 0;
+  display: flex; align-items: flex-start; justify-content: center;
+}
+.silo .nm {
+  position: absolute; top: -34px; font-size: 18px; letter-spacing: 1px; padding: 3px 10px; border-radius: 12px;
+  white-space: nowrap; color: #fff;
+}
+.legend { position: absolute; left: 50%; top: 858px; transform: translateX(-50%); display: flex; flex-direction: row; gap: 40px; }
+.legend .app { display: flex; align-items: center; gap: 14px; font-size: 24px; }
+.legend .app i { width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; font-style: normal; font-size: 20px; font-weight: 600; }
+
+/* ---------------------------------------------------------------- privacy fragments */
+.frag {
+  position: absolute; font-size: 22px; letter-spacing: 1px; color: #d8e8ff; white-space: nowrap;
+  padding: 6px 12px; border-radius: 8px; background: rgba(40, 70, 120, 0.35); border: 1px solid rgba(156,200,255,0.35);
+  transform: translate(-50%, -130%);
+}
+.frag .rec { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ff5a5a; margin-right: 8px; vertical-align: 2px; }
+
+/* ---------------------------------------------------------------- stack labels */
+.layer-tag { position: absolute; display: flex; align-items: center; gap: 14px; white-space: nowrap; }
+.layer-tag .h { font-size: 30px; font-weight: 600; letter-spacing: 2px; }
+.layer-tag .d { font-size: 20px; letter-spacing: 2px; color: var(--dim); margin-top: 4px; }
+.layer-tag .loc { font-size: 18px; padding: 4px 10px; border-radius: 6px; border: 1px solid; letter-spacing: 2px; }
+
+/* ---------------------------------------------------------------- explainer */
+.ex-zone { position: absolute; border-radius: 28px; }
+.ex-node {
+  position: absolute; width: 170px; margin-left: -85px; text-align: center;
+}
+.ex-node .c {
+  width: 96px; height: 96px; margin: 0 auto; border-radius: 28px; display: grid; place-items: center;
+  background: rgba(20, 16, 24, 0.7); border: 1.5px solid rgba(255,255,255,0.2); backdrop-filter: blur(10px);
+}
+.ex-node .c svg { width: 48px; height: 48px; }
+.ex-node .l { font-size: 26px; font-weight: 600; margin-top: 14px; letter-spacing: 2px; white-space: nowrap; }
+.ex-node .s { font-size: 19px; color: var(--dim); margin-top: 6px; letter-spacing: 2px; white-space: nowrap; }
+.ex-node .ok { position: absolute; right: 30px; top: -8px; width: 32px; height: 32px; border-radius: 50%; background: #3ccf8e; color: #fff; display: grid; place-items: center; font-size: 18px; font-weight: 700; }
+.ex-pill {
+  position: absolute; padding: 12px 22px; border-radius: 30px; font-size: 26px; white-space: nowrap; letter-spacing: 1px;
+  background: rgba(255,255,255,0.95); color: #1a1420; box-shadow: 0 0 30px rgba(255,180,120,0.45);
+}
+.ex-pill.reply { background: var(--grad); color: #fff; }
+.ex-wall-label { position: absolute; font-size: 22px; letter-spacing: 6px; color: var(--amber); writing-mode: vertical-rl; }
+.ex-head { position: absolute; font-size: 24px; letter-spacing: 4px; color: var(--dim); }
+.ex-note { position: absolute; font-size: 22px; letter-spacing: 3px; padding: 6px 14px; border-radius: 8px; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- rule card */
+.rule {
+  position: absolute; width: 470px; padding: 22px 26px; border-radius: 22px;
+  background: rgba(255, 252, 248, 0.16); backdrop-filter: blur(18px) saturate(1.2);
+  border: 1px solid rgba(255,255,255,0.45); box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  color: #fff; transform-origin: 0 0;
+}
+.rule .k { font-size: 18px; letter-spacing: 4px; color: rgba(255,255,255,0.8); }
+.rule .q { font-size: 34px; font-weight: 600; margin: 12px 0 14px; letter-spacing: 2px; }
+.rule .arrow { font-size: 22px; color: rgba(255,255,255,0.8); margin-bottom: 10px; }
+.rule .acts { display: flex; gap: 10px; }
+.rule .acts span { font-size: 22px; padding: 8px 14px; border-radius: 12px; background: rgba(0,0,0,0.25); }
+
+/* ---------------------------------------------------------------- camera HUD */
+.hud { position: absolute; inset: 40px 60px; }
+.hud .cn { position: absolute; width: 60px; height: 60px; border: 3px solid rgba(255,255,255,0.85); }
+.hud .cn.tl { left: 0; top: 0; border-right: none; border-bottom: none; }
+.hud .cn.tr { right: 0; top: 0; border-left: none; border-bottom: none; }
+.hud .cn.bl { left: 0; bottom: 0; border-right: none; border-top: none; }
+.hud .cn.br { right: 0; bottom: 0; border-left: none; border-top: none; }
+.hud .meta { position: absolute; left: 28px; top: 22px; font-family: "Menlo", monospace; font-size: 22px; letter-spacing: 2px; color: rgba(255,255,255,0.9); }
+.hud .rec { position: absolute; right: 28px; top: 22px; font-family: "Menlo", monospace; font-size: 22px; color: #fff; }
+.hud .rec i { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: #ff3b3b; margin-right: 10px; vertical-align: -1px; }
+.det { position: absolute; border: 3px solid var(--amber); border-radius: 6px; box-shadow: 0 0 24px rgba(255,170,90,0.45); }
+.det .lb {
+  position: absolute; left: -3px; top: -46px; padding: 6px 12px; font-size: 22px; white-space: nowrap;
+  background: var(--amber); color: #2a1300; font-weight: 600; letter-spacing: 1px; border-radius: 6px 6px 6px 0;
+}
+.scan { position: absolute; left: 0; right: 0; height: 2px; background: rgba(160, 220, 255, 0.35); box-shadow: 0 0 20px rgba(160,220,255,0.5); }
+
+/* ---------------------------------------------------------------- end card */
+.end { position: absolute; inset: 0; background: #000; text-align: center; }
+.end .t { position: absolute; left: 0; right: 0; top: 300px; font-size: 120px; font-weight: 600; letter-spacing: 30px; text-indent: 30px;
+  background: linear-gradient(100deg, #fff 0%, #ffd9b8 45%, #ffb36b 70%, #ff8fa8 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.end .b { position: absolute; left: 0; right: 0; top: 470px; font-size: 40px; letter-spacing: 6px; font-family: "Avenir Next", "PingFang SC"; font-weight: 500; }
+.end .r { position: absolute; left: 0; right: 0; top: 548px; font-size: 28px; letter-spacing: 4px; color: rgba(255,255,255,0.78); }
+.end .gh { position: absolute; left: 50%; top: 630px; transform: translateX(-50%); font-family: "Avenir Next"; font-size: 28px; letter-spacing: 1px;
+  padding: 12px 26px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.35); white-space: nowrap; }
+.end .disc { position: absolute; left: 0; right: 0; top: 760px; font-size: 19px; letter-spacing: 2px; color: rgba(255,255,255,0.42); line-height: 1.8; }
+
+.ico-svg svg { width: 100%; height: 100%; }
+
+/* ---------------------------------------------------------------- 《遥控器退休了》 additions */
+.title-main { letter-spacing: 24px; text-indent: 24px; }
+.eye-ok { position: absolute; display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 10px; border-radius: 20px;
+  background: rgba(10, 40, 24, 0.75); border: 1.5px solid #7dffb0; color: #b9ffd4; font-size: 22px; letter-spacing: 2px; white-space: nowrap; opacity: 0; }
+.eye-ok span { width: 22px; height: 22px; display: inline-block; color: #7dffb0; }
+.counter { position: absolute; right: 90px; top: 200px; text-align: right; }
+.counter .l { font-size: 24px; letter-spacing: 6px; color: rgba(220,232,255,0.75); }
+.counter .n { font-family: "Avenir Next"; font-weight: 300; font-size: 140px; line-height: 1; color: #e9f2ff; }
+.counter .n span { font-size: 70px; margin-right: 6px; color: rgba(156,200,255,0.8); }
+.counter .n b { display: inline-block; font-weight: 500; transform-origin: 70% 60%; }
+.counter.done .n b { color: #ff8a7a; }
+.counter .s { font-size: 20px; letter-spacing: 3px; color: rgba(220,232,255,0.55); margin-top: 8px; }
+.keyflash { position: absolute; right: 100px; top: 470px; min-width: 96px; height: 96px; padding: 0 22px; border-radius: 48px;
+  display: grid; place-items: center; font-family: "Avenir Next"; font-size: 46px; font-weight: 600; color: #fff;
+  background: rgba(30, 40, 60, 0.6); border: 2px solid rgba(156,200,255,0.6); }
+.keyflash.small { right: auto; left: 432px; top: 716px; height: 70px; min-width: 70px; font-size: 32px; border-color: rgba(255,111,142,0.7); background: rgba(60,20,30,0.55); }
+.onoff { position: absolute; transform: translate(-50%, -150%); font-size: 22px; letter-spacing: 3px; padding: 5px 14px; border-radius: 16px;
+  background: rgba(20, 40, 70, 0.7); border: 1px solid rgba(156,200,255,0.6); color: #cfe2ff; white-space: nowrap; }
+.hublabel { position: absolute; transform: translateX(-50%); font-size: 24px; letter-spacing: 4px; color: #cfe2ff; white-space: nowrap;
+  padding: 6px 16px; border-radius: 8px; background: rgba(10,20,40,0.6); }
+.trio { position: absolute; transform: translateX(-50%); text-align: center; }
+.trio .num-badge { position: relative; margin: 0 auto 10px; }
+.trio .h { font-size: 30px; font-weight: 600; letter-spacing: 3px; text-shadow: 0 2px 12px rgba(0,0,0,0.8); white-space: nowrap; }
+.trio .s { font-size: 21px; letter-spacing: 3px; color: var(--amber); margin-top: 4px; white-space: nowrap; }
+.timer { position: absolute; left: 116px; top: 690px; font-size: 30px; letter-spacing: 3px; color: var(--dim); }
+.timer b { font-family: "Avenir Next"; font-weight: 500; font-size: 64px; color: #fff; margin-right: 8px; }
+.timer.done b { color: var(--amber); }
+.timer small { display: block; font-size: 18px; letter-spacing: 4px; color: rgba(255,255,255,0.45); margin-top: 4px; }
+.chiprow { position: absolute; display: flex; gap: 14px; }
+.chiprow .chip { display: flex; align-items: center; gap: 10px; font-size: 26px; letter-spacing: 2px; padding: 10px 20px 10px 14px; border-radius: 30px;
+  border: 1.5px solid rgba(255,255,255,0.25); color: rgba(255,255,255,0.6); background: rgba(0,0,0,0.5); white-space: nowrap; }
+.chiprow .chip span { width: 28px; height: 28px; display: inline-block; }
+.chiprow .chip.on { color: #fff; border-color: var(--amber); background: rgba(255,150,80,0.18); box-shadow: 0 0 24px rgba(255,170,100,0.35); }
+.steps { position: absolute; width: 640px; }
+.steps .k { font-size: 22px; letter-spacing: 6px; color: var(--amber); }
+.steps .h { font-size: 34px; font-weight: 600; letter-spacing: 2px; margin: 12px 0 26px; white-space: nowrap; }
+.steps .st { display: flex; align-items: center; gap: 18px; height: 70px; font-size: 30px; letter-spacing: 2px; color: rgba(255,255,255,0.6); }
+.steps .st i { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-family: "Avenir Next";
+  font-size: 22px; border: 1.5px solid rgba(255,255,255,0.35); }
+.steps .st.on { color: #fff; }
+.steps .st.on i { border-color: transparent; background: var(--grad); }
+.steps .st b { width: 30px; height: 30px; color: #7dffb0; margin-left: 6px; }
+.stepsok { position: absolute; left: 154px; top: 752px; display: flex; align-items: center; gap: 12px; font-size: 34px; font-weight: 600; letter-spacing: 4px;
+  padding: 10px 26px 10px 18px; border-radius: 34px; background: rgba(30,120,70,0.35); border: 1.5px solid #7dffb0; color: #dfffea; }
+.stepsok span { width: 32px; height: 32px; color: #7dffb0; }
+.lan { position: absolute; left: 230px; top: 250px; width: 1460px; height: 470px; border-radius: 34px; border: 2px dashed rgba(255,190,140,0.55);
+  background: linear-gradient(160deg, rgba(255,170,100,0.06), rgba(155,123,255,0.04)); }
+.lan .lab { position: absolute; left: 50%; bottom: -24px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; font-size: 26px;
+  letter-spacing: 4px; padding: 8px 22px; border-radius: 26px; background: #0b0a0f; border: 1.5px solid rgba(255,190,140,0.65); color: #ffd7b0; white-space: nowrap; }
+.lan .lab span { width: 30px; height: 30px; display: inline-block; }
+.ex-node.wide { width: 380px; margin-left: -190px; }
+.ex-node .note { margin-top: 18px; font-size: 20px; line-height: 1.6; letter-spacing: 1px; color: rgba(255,255,255,0.7); opacity: 0; }
+.ex-node .note b { color: var(--amber); font-weight: 500; }
+.subnote { position: absolute; left: 112px; top: 330px; font-size: 28px; letter-spacing: 3px; color: rgba(255,255,255,0.8); text-shadow: 0 2px 12px rgba(0,0,0,0.8); }
+.slam.soft { font-size: 60px; letter-spacing: 8px; color: #fff; text-shadow: 0 0 30px rgba(255,170,110,0.5); }
+.tag .ok.warn { background: #ff6b6b; }
