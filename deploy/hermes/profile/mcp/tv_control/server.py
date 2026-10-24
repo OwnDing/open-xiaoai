@@ -100,7 +100,9 @@ def tv_click(text: str, index: int = 0) -> dict[str, Any]:
 def tv_type(text: str, submit: bool = True) -> dict[str, Any]:
     """Type text into the input field on the TV screen (browser address bar: a site such as
     bing.com; a search box: the words), replacing what is in it. Open the field first: tv_click
-    "搜索或输入 URL" in BrowseHere, or the app's search box. submit=true then sends it (go/search)."""
+    "搜索或输入 URL" in BrowseHere, or the app's search box. submit=true then sends it (go/search)
+    and returns the texts of the page it lands on as `page`: no tv_screen needed after it.
+    submitted=false means the page did not change: look at the screen before saying it searched."""
     return _run(TV.type, text, submit)
 
 

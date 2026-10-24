@@ -365,29 +365,52 @@ class TV:
 
     def type(self, text, submit=True):
         """Puts text into the input field on screen (the focused one, else the first), replacing
-        what is there. submit runs the field's own search/go action; a web page ignores that
-        (Bing's search box keeps the text), so then the search button beside the field is clicked."""
+        what is there. submit runs the field's own search/go action; web pages ignore that (Bing's
+        search box, BrowseHere's address bar), so then the search button beside the field is
+        clicked. Sent means the page changed; the texts of the new one come back as `page`."""
+        before = self._page() if submit else None
         result = self.call("POST", "/type", {"text": text, "submit": submit})
         if not result.get("ok"):
             raise TVError(result.get("error") or "输入没有成功")
         if not submit:
             return {"ok": True, "typed": text, "say": f"输入了“{text}”。"}
-        if self.wait(lambda: not self._field_holds(text), 2):
-            return {"ok": True, "typed": text, "submitted": True, "say": f"输入了“{text}”并确认了。"}
-        button = self._submit_button()
-        if button and self.call("POST", "/click", {"text": button[0], "index": button[1]}).get("ok"):
-            return {"ok": True, "typed": text, "submitted": True, "say": f"输入了“{text}”，点了“{button[0]}”。"}
-        return {"ok": True, "typed": text, "submitted": False,
-                "say": f"输入了“{text}”，但没找到能确认的按钮，看一下屏幕再点。"}
+        page = self.wait(lambda: self._moved_on(before), 2)
+        say = f"输入了“{text}”并确认了。"
+        if not page:
+            button = self._submit_button(text)
+            if not button or not self.call("POST", "/click", {"text": button[0], "index": button[1]}).get("ok"):
+                return {"ok": True, "typed": text, "submitted": False,
+                        "say": f"输入了“{text}”，但没找到能确认的按钮，看一下屏幕再点。"}
+            page = self.wait(lambda: self._moved_on(before), 4)
+            if not page:
+                return {"ok": True, "typed": text, "submitted": False,
+                        "say": f"输入了“{text}”，点了“{button[0]}”，但页面没有变化。"}
+            say = f"输入了“{text}”，点了“{button[0]}”。"
+        # A web page is blank while it loads.
+        labels = page[1] or self.wait(lambda: self._page()[1], 6)
+        return {"ok": True, "typed": text, "submitted": True, "page": [label[:40] for label in labels[:30]],
+                "say": say if labels else say + "页面还在加载。"}
 
-    def _field_holds(self, text):
-        return any(item.get("editable") and item.get("focused") and item["text"] == text
-                   for item in self.screen(80).get("items", []))
+    def _page(self):
+        """(app, the texts on screen other than input fields)."""
+        screen = self.screen(150)
+        return screen.get("package"), [i["text"] for i in screen.get("items", []) if i["text"] and not i.get("editable")]
 
-    def _submit_button(self):
-        """(label, index for /click) of the search/go button on the input field's row, nearest first."""
+    def _moved_on(self, before):
+        """The page on screen once it is no longer before (another app, or most of its texts gone,
+        as while a web page loads), else None. Suggestions under a field only add texts."""
+        app, labels = self._page()
+        old = set(before[1])
+        if app != before[0] or len(old & set(labels)) * 2 < len(old):
+            return app, labels
+        return None
+
+    def _submit_button(self, text):
+        """(label, index for /click) of the search/go button on the row of the field holding text
+        (else the focused field, else the first), nearest first."""
         items = self.screen(150).get("items", [])
-        field = next((i for i in items if i.get("editable") and i.get("focused")), None)
+        field = min((i for i in items if i.get("editable")),
+                    key=lambda i: (i["text"] != text, not i.get("focused")), default=None)
         if field is None:
             return None
         left, top, right, bottom = field["bounds"]

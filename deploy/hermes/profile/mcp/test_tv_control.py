@@ -68,6 +68,8 @@ class Home:
         self.episode = 3
         self.ime_submits = True  # a native field; a web page ignores the IME action
         self.submitted_page = []
+        self.blank_reads = 0  # screen reads a submitted web page stays blank while it loads
+        self.loading = 0
 
     def ir_toggle(self):
         self.on = not self.on
@@ -94,14 +96,18 @@ class Home:
             self.items = self.search_results.get(keyword, [])
             return {"ok": True}
         if path == "/type":
-            field = next((i for i in self.items if i.get("editable") and i.get("focused")), None)
-            if field is None:
+            fields = [i for i in self.items if i.get("editable")]
+            if not fields:
                 return {"ok": False, "error": "屏幕上没有输入框"}
+            field = next((i for i in fields if i.get("focused")), fields[0])
             field["text"] = body["text"]
             if body.get("submit") and self.ime_submits:
                 self.items = self.submitted_page
             return {"ok": True, "submitted": bool(body.get("submit") and self.ime_submits)} if body.get("submit") else {"ok": True}
         if path.startswith("/screen"):
+            if self.loading:
+                self.loading -= 1
+                return {"ok": True, "package": self.package, "items": []}
             items = list(self.items)
             if self.sessions and self.sessions[0]["state"] == "playing":
                 items.append({"text": f"狂飙 第{self.episode}集", "bounds": [0, 0, 10, 10]})
@@ -110,6 +116,7 @@ class Home:
             matching = [i for i in self.items if i["text"] == body["text"]]
             if matching[body.get("index", 0)].get("submits"):
                 self.items = self.submitted_page
+                self.loading = self.blank_reads
             return {"ok": True, "clicked": body["text"]}
         if path == "/click":
             if body["text"] == "播放" and any(i["text"] == "播放" for i in self.items):
@@ -312,6 +319,7 @@ class TypeTests(unittest.TestCase):
         home.submitted_page = [{"text": "必应", "bounds": [0, 0, 10, 10]}]
         result = make(home).type("bing.com")
         self.assertEqual((result["submitted"], home.items), (True, home.submitted_page))
+        self.assertEqual(result["page"], ["必应"])
         self.assertFalse(any(r[1] == "/click" for r in home.requests))
 
     def test_web_page_field_gets_the_button_on_its_row(self):
@@ -323,6 +331,38 @@ class TypeTests(unittest.TestCase):
         self.assertTrue(result["submitted"])
         self.assertEqual(home.items, home.submitted_page)
         self.assertIn(("POST", "/click", {"text": "搜索网页", "index": 0}), home.requests)
+
+    def test_unfocused_field_is_not_taken_as_sent(self):
+        # 2026-10-23: Bing's box had no focus, and 小七 heard "确认了" for a search never sent.
+        home = Home()
+        home.ime_submits = False
+        home.items = [dict(item, focused=False) for item in BING]
+        home.submitted_page = [{"text": "今天天气 - 搜索", "bounds": [0, 0, 10, 10]}]
+        result = make(home).type("今天天气")
+        self.assertEqual((result["submitted"], result["page"]), (True, ["今天天气 - 搜索"]))
+        self.assertIn(("POST", "/click", {"text": "搜索网页", "index": 0}), home.requests)
+
+    def test_waits_for_the_new_page_to_load(self):
+        home = Home()
+        home.ime_submits = False
+        home.items = [dict(item) for item in BING]
+        home.submitted_page = [{"text": "今天天气 - 搜索", "bounds": [0, 0, 10, 10]}]
+        home.blank_reads = 4
+        self.assertEqual(make(home).type("今天天气")["page"], ["今天天气 - 搜索"])
+        home.items = [dict(item) for item in BING]
+        home.blank_reads = 100
+        result = make(home).type("今天天气")
+        self.assertEqual((result["submitted"], result["page"]), (True, []))
+        self.assertTrue(result["say"].endswith("页面还在加载。"))
+
+    def test_button_that_changes_nothing(self):
+        home = Home()
+        home.ime_submits = False
+        home.items = [{k: v for k, v in item.items() if k != "submits"} for item in BING]
+        home.submitted_page = [{"text": "今天天气 - 搜索", "bounds": [0, 0, 10, 10]}]
+        result = make(home).type("今天天气")
+        self.assertFalse(result["submitted"])
+        self.assertIn("页面没有变化", result["say"])
 
     def test_without_submit_only_types(self):
         home = Home()
