@@ -704,6 +704,24 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(spoken, "输入了 bing.com，必应打开了。")
         self.assertIn(hermes.TV_CLAIM_NOTE, requests[1])
 
+    def test_web_page_claims_after_tv_talk_need_a_tv_tool(self):
+        # 2026-10-24 08:13: said with no tool call, and the TV still showed the browser's home page.
+        reply = "必应已经打开了，不过搜索框还没输入内容，你想搜什么？"
+        self.assertEqual(hermes.claim_need(reply, tv_context=True), "tv")
+        self.assertIsNone(hermes.claim_need(reply))  # 小七 also searches the web itself
+        self.assertIsNone(hermes.claim_need(reply, tv_context=True, tv=True))
+        self.assertEqual(hermes.claim_need("电视打开了，你想看什么？"), "tv")
+        for reply in ("要我在必应里搜什么？", "你想在搜索框里输入什么？", "要我给你打开必应吗？"):
+            self.assertIsNone(hermes.claim_need(reply, tv_context=True), reply)
+        spoken, requests = self.run_dialogue(
+            [user("打开电视上的浏览器。"), {"role": "assistant", "content": "好了，浏览器已经打开了。"},
+             user("很好，打开微软并搜索。")],
+            [("text", "必应已经打开了，不过搜索框还没输入内容，你想搜什么？")],
+            [("tool", "mcp__tv_control__tv_type"), ("text", "必应打开了，你想搜什么？")],
+        )
+        self.assertEqual(spoken, "必应打开了，你想搜什么？")
+        self.assertIn(hermes.TV_CLAIM_NOTE, requests[1])
+
     def test_a_tv_promise_before_the_tool_is_spoken(self):
         # 20 s of tv_play: "我先在电视上搜一下" is worth hearing.
         spoken, requests = self.run_turn(

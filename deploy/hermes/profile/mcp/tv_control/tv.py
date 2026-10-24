@@ -386,10 +386,20 @@ class TV:
                 return {"ok": True, "typed": text, "submitted": False,
                         "say": f"输入了“{text}”，点了“{button[0]}”，但页面没有变化。"}
             say = f"输入了“{text}”，点了“{button[0]}”。"
-        # A web page is blank while it loads.
-        labels = page[1] or self.wait(lambda: self._page()[1], 6)
+        labels = self._new_page(before, page[1])
         return {"ok": True, "typed": text, "submitted": True, "page": [label[:40] for label in labels[:30]],
                 "say": say if labels else say + "页面还在加载。"}
+
+    def _new_page(self, before, labels, timeout=6):
+        """labels once most of them are not before's, else the texts on screen once they are, else []:
+        a web page is blank while it loads, and right after a click can still show parts of the old
+        one (2026-10-24 Bing: 15 of 16 texts from its home page, then the results)."""
+        old = set(before[1])
+
+        def new(labels):
+            return labels if len(old & set(labels)) * 2 < len(set(labels)) else None
+
+        return new(labels) or self.wait(lambda: new(self._page()[1]), timeout) or []
 
     def _page(self):
         """(app, the texts on screen other than input fields)."""

@@ -151,6 +151,9 @@ MUSIC_TALK = re.compile(r"歌|音乐|专辑|唱|首(?![页播])")
 # A reply that does something on the TV ("我按杨超越在电视上搜了", "我这就去电视上按她的名字搜",
 # "必应打开了，页面已经显示在屏幕上", "好，退出爱奇艺了"). 电视剧 is a show, not the set.
 TV_SET = re.compile(r"电视(?![剧台])|奇异果|爱奇艺|" + TV_APP.pattern)
+# A web page in the TV's browser, named without the set (2026-10-24 "必应已经打开了，不过搜索框还没
+# 输入内容", no tool call): the TV's only while the turn is about it, since 小七 also searches the web.
+TV_WEB = re.compile(r"必应|百度|bing|搜索框|搜索页|网站", re.I)
 
 
 def _tv_claims(act):
@@ -568,10 +571,12 @@ def claim_need(sentence, acted=False, looked=False, saved=False, rule_context=Fa
             return "save"
     # A title can read as a condition: 《如果奔跑是我的人生》.
     bare = SHOW_TITLE.sub("《》", text)
-    done, promise = (TV_DONE, TV_PROMISE) if TV_SET.search(text) else (SHOW_DONE, SHOW_PROMISE)
-    if (not tv and not QUESTION_END.search(text)
-            and (TV_SET.search(text) or tv_context and TV_SHOW.search(text) and not MUSIC_TALK.search(bare))
-            and (_claims(done, bare) or _claims(promise, bare, promise=True))):
+    tv_set = TV_SET.search(text) or tv_context and TV_WEB.search(text)
+    done, promise = (TV_DONE, TV_PROMISE) if tv_set else (SHOW_DONE, SHOW_PROMISE)
+    # A claim before a question still claims ("必应已经打开了，你想搜什么？"); a promise in one offers.
+    if (not tv
+            and (tv_set or tv_context and TV_SHOW.search(text) and not MUSIC_TALK.search(bare))
+            and (_claims(done, bare) or not QUESTION_END.search(text) and _claims(promise, bare, promise=True))):
         return "tv"
     if acted:
         return None

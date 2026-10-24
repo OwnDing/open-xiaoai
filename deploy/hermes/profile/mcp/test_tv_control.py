@@ -68,8 +68,8 @@ class Home:
         self.episode = 3
         self.ime_submits = True  # a native field; a web page ignores the IME action
         self.submitted_page = []
-        self.blank_reads = 0  # screen reads a submitted web page stays blank while it loads
-        self.loading = 0
+        self.between = []  # what screen reads show after a submit before the new page (blank, bits of the old)
+        self.showing = []
 
     def ir_toggle(self):
         self.on = not self.on
@@ -105,9 +105,8 @@ class Home:
                 self.items = self.submitted_page
             return {"ok": True, "submitted": bool(body.get("submit") and self.ime_submits)} if body.get("submit") else {"ok": True}
         if path.startswith("/screen"):
-            if self.loading:
-                self.loading -= 1
-                return {"ok": True, "package": self.package, "items": []}
+            if self.showing:
+                return {"ok": True, "package": self.package, "items": self.showing.pop(0)}
             items = list(self.items)
             if self.sessions and self.sessions[0]["state"] == "playing":
                 items.append({"text": f"狂飙 第{self.episode}集", "bounds": [0, 0, 10, 10]})
@@ -116,7 +115,7 @@ class Home:
             matching = [i for i in self.items if i["text"] == body["text"]]
             if matching[body.get("index", 0)].get("submits"):
                 self.items = self.submitted_page
-                self.loading = self.blank_reads
+                self.showing = list(self.between)
             return {"ok": True, "clicked": body["text"]}
         if path == "/click":
             if body["text"] == "播放" and any(i["text"] == "播放" for i in self.items):
@@ -347,13 +346,25 @@ class TypeTests(unittest.TestCase):
         home.ime_submits = False
         home.items = [dict(item) for item in BING]
         home.submitted_page = [{"text": "今天天气 - 搜索", "bounds": [0, 0, 10, 10]}]
-        home.blank_reads = 4
+        home.between = [[]] * 4
         self.assertEqual(make(home).type("今天天气")["page"], ["今天天气 - 搜索"])
         home.items = [dict(item) for item in BING]
-        home.blank_reads = 100
+        home.between = [[]] * 100
         result = make(home).type("今天天气")
         self.assertEqual((result["submitted"], result["page"]), (True, []))
         self.assertTrue(result["say"].endswith("页面还在加载。"))
+
+    def test_bits_of_the_old_page_are_not_the_new_one(self):
+        # 2026-10-24: right after the click Bing still showed parts of its home page.
+        home = Home()
+        home.ime_submits = False
+        home.items = [dict(item) for item in BING] + [{"text": label, "bounds": [0, 300 + 40 * n, 100, 330 + 40 * n]}
+                                                      for n, label in enumerate(("必应", "图片", "视频", "翻译"))]
+        home.submitted_page = [{"text": "今天天气 - 搜索", "bounds": [0, 0, 10, 10]}, {"text": "跳至内容", "bounds": [0, 20, 10, 30]},
+                               {"text": "图片", "bounds": [0, 50, 10, 60]}]
+        home.between = [[{"text": "必应", "bounds": [0, 0, 10, 10]}, {"text": "图片", "bounds": [0, 50, 10, 60]}]] * 2
+        result = make(home).type("今天天气")
+        self.assertEqual((result["submitted"], result["page"]), (True, ["今天天气 - 搜索", "跳至内容", "图片"]))
 
     def test_button_that_changes_nothing(self):
         home = Home()
