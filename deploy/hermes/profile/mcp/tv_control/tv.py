@@ -194,12 +194,16 @@ class TV:
         return package
 
     def find_app(self, name):
+        """The app spoken as name, or None. A miss reads the app list again: it is kept from the
+        first read, and an app may have been installed since (2026-10-25 影视仓)."""
         want = _norm(APP_ALIASES.get(_norm(name), name))
-        apps = self.apps()
-        for test in (lambda label: label == want, lambda label: want in label, lambda label: label and label in want):
-            for app in apps:
-                if test(_norm(app["label"])):
-                    return app
+        for _ in range(2):
+            apps = self.apps()
+            for test in (lambda label: label == want, lambda label: want in label, lambda label: label and label in want):
+                for app in apps:
+                    if test(_norm(app["label"])):
+                        return app
+            self._apps = None
         return None
 
     def open_app(self, name):

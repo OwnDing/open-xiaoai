@@ -61,6 +61,7 @@ class Home:
         self.on = on
         self.helper_running = helper_running
         self.package = "com.tcl.cyberui"
+        self.apps = list(APPS)
         self.sessions = []
         self.items = []
         self.requests = []
@@ -82,7 +83,7 @@ class Home:
         if path == "/status":
             return {"ok": True, "package": self.package, "screen_on": True}
         if path == "/apps":
-            return {"ok": True, "apps": APPS}
+            return {"ok": True, "apps": self.apps}
         if path == "/launch":
             self.package = body["package"]
             return {"ok": True}
@@ -246,6 +247,15 @@ class AppTests(unittest.TestCase):
     def test_unknown_app(self):
         with self.assertRaises(TVError):
             make(Home()).open_app("抖音")
+
+    def test_an_app_installed_after_the_list_was_read(self):
+        home = Home()
+        tv = make(home)
+        tv.find_app("爱奇艺")
+        home.apps = home.apps + [{"label": "影视仓", "package": "com.huawei.himovceie"}]
+        self.assertEqual(tv.open_app("影视仓")["say"], "打开影视仓了。")
+        self.assertEqual(home.package, "com.huawei.himovceie")
+        self.assertEqual(sum(r[1] == "/apps" for r in home.requests), 2)
 
 
 class PlayTests(unittest.TestCase):
