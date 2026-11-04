@@ -20,5 +20,11 @@ for server in home_rules home_history xiaoqi_music tv_control; do
     rm -rf "$HOME_DIR/mcp/$server"
     cp -R "/seed/profile/mcp/$server" "$HOME_DIR/mcp/"
 done
+# QQ text chats through the speaker's tool-call guard (config.yaml plugins.enabled):
+# the plugin plus the xiaozhi provider it runs (mounted at /seed/xiaozhi-provider).
+mkdir -p "$HOME_DIR/plugins"
+rm -rf "$HOME_DIR/plugins/qq_guard"
+cp -R /seed/profile/plugins/qq_guard "$HOME_DIR/plugins/"
+cp /seed/xiaozhi-provider/hermes.py "$HOME_DIR/plugins/qq_guard/hermes.py"
 chown -R 10000:10000 "$HOME_DIR"
 echo "Installed xiaoqi-home profile files into $HOME_DIR"

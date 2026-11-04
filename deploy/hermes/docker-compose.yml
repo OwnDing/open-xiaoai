@@ -20,6 +20,8 @@ services:
     volumes:
       - hermes-data:/opt/data
       - ./profile:/seed/profile:ro
+      # The speaker's tool-call guard, also run for QQ chats (profile/plugins/qq_guard).
+      - ./xiaozhi-provider:/seed/xiaozhi-provider:ro
     networks:
       - default
       - xiaozhi

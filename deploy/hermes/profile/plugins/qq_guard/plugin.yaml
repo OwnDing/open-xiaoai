@@ -1,0 +1,6 @@
+name: qq_guard
+version: "1.0.0"
+description: "小七's voice guard for QQ private chats: a paired user's text message is answered through the same tool-call guard as the speaker (deploy/hermes/xiaozhi-provider/hermes.py) — saved scene phrases and music run without the model, and a reply that claims a device was switched or read without the tool behind it is dropped and retried. Other messages (commands, media, unpaired users) go on to Hermes as usual."
+author: "xiaoqi-home"
+provides_hooks:
+  - pre_gateway_dispatch
