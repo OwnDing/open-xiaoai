@@ -1,0 +1,88 @@
+# QQ alerts from Home Assistant (installed 2026-11-04).
+#
+# configuration.yaml — sends {"message": ...} to Hermes' webhook route ha-alert,
+# which forwards it as-is to the qqbot home channel (deploy/hermes, "QQ"):
+#
+#   rest_command:
+#     qq_notify:
+#       url: http://hermes:8644/webhooks/ha-alert
+#       method: POST
+#       headers:
+#         X-Gitlab-Token: !secret hermes_webhook_secret   # = WEBHOOK_SECRET in Hermes .env
+#       content_type: application/json
+#       payload: '{"message": {{ message | tojson }}}'
+#       timeout: 15
+#
+# rest_command needs an HA restart the first time. Any automation can then use
+#   action: rest_command.qq_notify
+#   data: {message: "..."}
+#
+# The automations below live in /config/automations.yaml (created through the
+# config API, ids qq_alert_*). 连廊有人 is pushed with its snapshot by
+# person-watch itself (QQ_NOTIFY_CAMS); sensor.person_watch_heartbeat comes from
+# deploy/person-watch/ha_templates.yaml.
+
+- id: qq_alert_water_leak
+  alias: QQ告警：阳台水浸
+  description: 阳台水浸传感器检测到漏水时发 QQ（rest_command.qq_notify → Hermes → QQ），恢复干燥时再发一条
+  triggers:
+  - trigger: state
+    entity_id: binary_sensor.zhiee_cn_blt_3_1qd77v0tsco01_sj01_submersion_state_p_2_1006
+    from: 'off'
+    to: 'on'
+    id: wet
+  - trigger: state
+    entity_id: binary_sensor.zhiee_cn_blt_3_1qd77v0tsco01_sj01_submersion_state_p_2_1006
+    from: 'on'
+    to: 'off'
+    id: dry
+  conditions: []
+  actions:
+  - action: rest_command.qq_notify
+    data:
+      message: '{% if trigger.id == ''wet'' %}【告警】阳台水浸传感器检测到漏水！{{ now().strftime(''%m-%d %H:%M:%S'') }}，请尽快检查。{% else %}【恢复】阳台水浸传感器已恢复干燥（{{ now().strftime(''%m-%d %H:%M'') }}）。{% endif %}'
+  mode: queued
+- id: qq_alert_leak_battery
+  alias: QQ告警：水浸传感器电量低
+  description: 阳台水浸传感器电量低于 20% 时发 QQ 提醒换电池
+  triggers:
+  - trigger: numeric_state
+    entity_id: sensor.zhiee_cn_blt_3_1qd77v0tsco01_sj01_battery_level_p_3_1003
+    below: 20
+  conditions: []
+  actions:
+  - action: rest_command.qq_notify
+    data:
+      message: 【提醒】阳台水浸传感器电量只剩 {{ states('sensor.zhiee_cn_blt_3_1qd77v0tsco01_sj01_battery_level_p_3_1003') }}%，请换电池，否则漏水时可能收不到告警。
+  mode: single
+- id: qq_alert_camera_down
+  alias: QQ告警：摄像头监控中断
+  description: 摄像头断流 5 分钟（person-watch 报 unavailable），或 person-watch 5 分钟没有心跳时发 QQ；摄像头恢复后再发一条
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.person_keting
+    - binary_sensor.person_lianlang
+    to: unavailable
+    for:
+      minutes: 5
+    id: down
+  - trigger: template
+    id: stale
+    value_template: '{{ now() - (states(''sensor.person_watch_heartbeat'') | as_datetime(now())) > timedelta(minutes=5) }}'
+  - trigger: state
+    entity_id:
+    - binary_sensor.person_keting
+    - binary_sensor.person_lianlang
+    from: unavailable
+    id: up
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.id != ''up'' or now() - trigger.from_state.last_changed > timedelta(minutes=5) }}'
+  actions:
+  - action: rest_command.qq_notify
+    data:
+      message: '{% if trigger.id == ''stale'' %}【告警】人形检测服务（person-watch）5 分钟没有上报，摄像头有人识别可能已停止。{% else %}{% set n = {''binary_sensor.person_keting'': ''客厅摄像头'', ''binary_sensor.person_lianlang'': ''连廊摄像头''}[trigger.entity_id]
+        %}{% if trigger.id == ''down'' %}【告警】{{ n }}断线超过 5 分钟，现在没有在识别有人。{% else %}【恢复】{{ n }}已恢复，重新开始识别有人。{% endif %}{% endif %}（{{ now().strftime(''%m-%d %H:%M'') }}）'
+  mode: queued
+
