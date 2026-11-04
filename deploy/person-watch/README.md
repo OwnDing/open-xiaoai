@@ -11,7 +11,7 @@
                       ├─ 抓拍：取主码流下一个关键帧（1080p，0–2 秒内），再检测一遍并画框
                       ├─ SQLite + JPEG（命名卷 person-watch-data，保留 30 天）
                       ├─ 网页 http://192.168.5.15:18110
-                      └─ HA：binary_sensor.person_keting / binary_sensor.person_lianlang
+                      └─ HA webhook → 模板传感器 binary_sensor.person_keting / person_lianlang
 ```
 
 - 模型：[person-detection-0202](https://docs.openvino.ai/2023.3/omz_models_model_person_detection_0202.html)（Intel Open Model Zoo，Apache-2.0，1.8 M 参数，3.6 MB）。它只认人，在构建镜像时下载。输入尺寸会按每台摄像头的画面比例调整：客厅 576×320，连廊 480×384。
@@ -34,12 +34,19 @@
 cd C:\Users\djcmy\Documents\develop\ai\open-xiaoai\deploy\person-watch
 # 摄像头地址（含密码）从 HA 的 generic 摄像头配置生成，只留在 mini PC 上，不进 git
 docker exec -i homeassistant python3 - < cams_from_ha.py > cams.env
-# HA 令牌：HA 网页 → 左下角用户 → 安全 → 长期访问令牌 → 创建（名字 person-watch），
-# 把 HA_TOKEN=<令牌> 写进 .env。不写也能运行，只是不更新 HA 传感器。
+# .env：网页登录 WEB_USER=... / WEB_PASSWORD=...（可选）
 docker compose up -d --build
 ```
 
-`create_ha_token.py` 也可以用现有的管理员令牌，通过 HA websocket 创建令牌（用法见文件开头）。
+HA 端（只需做一次）：
+
+1. 把 `ha_templates.yaml` 拷成 HA 的 `/config/templates.yaml`。
+2. 在 `configuration.yaml` 里加一行 `template: !include templates.yaml`。
+3. 重启 HA。
+
+完成后会多出两个带 unique_id 的模板二元传感器，由 webhook `person-watch-<摄像头>` 更新（只接受局域网访问）。它们可以分配区域；当前分在"客厅"和"室外连廊"。
+
+如果不用 webhook（删掉 compose 里的 `HA_WEBHOOK`），person-watch 会改用 `.env` 里的 `HA_TOKEN`，直接写 `/api/states`。这样写出来的实体没有 unique_id，只能在"开发者工具 → 状态"里看到。HA 网页 → 左下角用户 → 安全 → 长期访问令牌，可以创建令牌；`create_ha_token.py` 也能用现有的管理员令牌创建。
 
 ## 查看记录
 
@@ -51,7 +58,7 @@ docker compose up -d --build
 
   有人时状态为 `on`，摄像头断流超过 60 秒变成 `unavailable`。属性里有 `max_persons`、`event_start` 和 `last_snapshot`（抓拍网址）。HA 自己保留 30 天历史。
 
-  这两个实体是通过 REST 写入的，没有 unique_id；person-watch 每分钟重发一次，所以 HA 重启后会自动恢复。
+  person-watch 每分钟重发一次当前状态；模板传感器在 HA 重启后也会恢复之前的状态。
 
 ## 调参
 

@@ -13,6 +13,8 @@ services:
       TZ: Asia/Shanghai
       CAM_LABELS: keting=客厅,lianlang=连廊
       HA_URL: http://homeassistant:8123
+      # States go to the HA template sensors in ha_templates.yaml via webhook.
+      HA_WEBHOOK: person-watch-
       PUBLIC_URL: http://192.168.5.15:18110
       DEBUG_DETS: "1"
     ports:

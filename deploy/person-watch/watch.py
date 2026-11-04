@@ -57,6 +57,9 @@ OFFLINE_AFTER_S = float(env("OFFLINE_AFTER_S", "60"))
 INPUT_AREA = int(env("INPUT_AREA", str(544 * 320)))
 HA_URL = env("HA_URL", "").rstrip("/")
 HA_TOKEN = env("HA_TOKEN", "")
+# Set (e.g. "person-watch-") when HA has the trigger-based template sensors from
+# ha_templates.yaml: states then go to webhook <prefix><camera>, which needs no token.
+HA_WEBHOOK = env("HA_WEBHOOK", "")
 PUBLIC_URL = env("PUBLIC_URL", "").rstrip("/")
 PORT = int(env("PORT", "8080"))
 WEB_USER, WEB_PASSWORD = env("WEB_USER", ""), env("WEB_PASSWORD", "")
@@ -205,15 +208,16 @@ class HomeAssistant:
         self.push(cam.name)
 
     def push(self, name):
-        if not (HA_URL and HA_TOKEN):
+        if not HA_URL or not (HA_WEBHOOK or HA_TOKEN):
             return
         with self.lock:
             state, attrs = self.states[name]
         body = json.dumps({"state": state, "attributes": attrs}).encode()
-        req = urllib.request.Request(
-            f"{HA_URL}/api/states/binary_sensor.person_{name}", data=body, method="POST",
-            headers={"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"},
-        )
+        if HA_WEBHOOK:
+            url, headers = f"{HA_URL}/api/webhook/{HA_WEBHOOK}{name}", {}
+        else:
+            url, headers = f"{HA_URL}/api/states/binary_sensor.person_{name}", {"Authorization": f"Bearer {HA_TOKEN}"}
+        req = urllib.request.Request(url, data=body, method="POST", headers={**headers, "Content-Type": "application/json"})
         try:
             urllib.request.urlopen(req, timeout=5).read()
         except Exception as e:
