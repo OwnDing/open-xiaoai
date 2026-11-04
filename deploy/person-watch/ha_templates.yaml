@@ -1,0 +1,57 @@
+# HA side of person-watch: one trigger-based template binary_sensor per camera,
+# fed by the webhook person-watch posts to (HA_WEBHOOK=person-watch-).
+# They have unique_ids, so they can sit in an area, and keep their state over an HA restart.
+# Installed as /config/templates.yaml with `template: !include templates.yaml`.
+- triggers:
+    - trigger: webhook
+      webhook_id: person-watch-keting
+      allowed_methods: [POST]
+      local_only: true
+  binary_sensor:
+    - name: 客厅摄像头有人
+      unique_id: person_watch_keting
+      default_entity_id: binary_sensor.person_keting
+      device_class: occupancy
+      icon: mdi:cctv
+      state: "{{ trigger.json.state == 'on' }}"
+      availability: "{{ trigger.json.state in ['on', 'off'] }}"
+      attributes:
+        max_persons: "{{ trigger.json.attributes.max_persons | default(0) }}"
+        event_start: "{{ trigger.json.attributes.event_start | default(none) }}"
+        last_event_start: "{{ trigger.json.attributes.last_event_start | default(none) }}"
+        last_event_end: "{{ trigger.json.attributes.last_event_end | default(none) }}"
+        last_snapshot: "{{ trigger.json.attributes.last_snapshot | default(none) }}"
+
+- triggers:
+    - trigger: webhook
+      webhook_id: person-watch-lianlang
+      allowed_methods: [POST]
+      local_only: true
+  binary_sensor:
+    - name: 连廊摄像头有人
+      unique_id: person_watch_lianlang
+      default_entity_id: binary_sensor.person_lianlang
+      device_class: occupancy
+      icon: mdi:cctv
+      state: "{{ trigger.json.state == 'on' }}"
+      availability: "{{ trigger.json.state in ['on', 'off'] }}"
+      attributes:
+        max_persons: "{{ trigger.json.attributes.max_persons | default(0) }}"
+        event_start: "{{ trigger.json.attributes.event_start | default(none) }}"
+        last_event_start: "{{ trigger.json.attributes.last_event_start | default(none) }}"
+        last_event_end: "{{ trigger.json.attributes.last_event_end | default(none) }}"
+        last_snapshot: "{{ trigger.json.attributes.last_snapshot | default(none) }}"
+
+# Stamped every minute by person-watch; HA's "QQ告警：摄像头监控中断" fires when it goes stale.
+- triggers:
+    - trigger: webhook
+      webhook_id: person-watch-heartbeat
+      allowed_methods: [POST]
+      local_only: true
+  sensor:
+    - name: person-watch 最后上报
+      unique_id: person_watch_heartbeat
+      default_entity_id: sensor.person_watch_heartbeat
+      device_class: timestamp
+      icon: mdi:heart-pulse
+      state: "{{ now().isoformat() }}"
