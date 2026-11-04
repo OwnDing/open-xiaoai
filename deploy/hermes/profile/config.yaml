@@ -43,6 +43,14 @@ platform_toolsets:
     - web
     - homeassistant
     - cronjob
+  # Chatting with 小七 from QQ: the same tools as the speaker.
+  qqbot:
+    - memory
+    - session_search
+    - skills
+    - web
+    - homeassistant
+    - cronjob
   # Scheduled jobs run unattended with auto-approval, from prompts written by
   # the voice agent: give them Home Assistant only. Left unset, cron would get
   # the full default set (terminal, files, code execution, browser...).
@@ -105,6 +113,31 @@ mcp_servers:
     tools:
       resources: false
       prompts: false
+
+# QQ official bot (QQ_APP_ID / QQ_CLIENT_SECRET in .env): private chats only.
+# A new QQ user gets a pairing code that must be approved
+# (hermes pairing approve qqbot <code>); groups are off. Plain text, because
+# native markdown needs a separate approval from QQ.
+platforms:
+  qqbot:
+    enabled: true
+    extra:
+      markdown_support: false
+      dm_policy: pairing
+      group_policy: disabled
+  # Home Assistant alerts to QQ without the model: HA's rest_command.qq_notify
+  # POSTs {"message": ...} to http://hermes:8644/webhooks/ha-alert with header
+  # X-Gitlab-Token: <WEBHOOK_SECRET from .env>; the message goes as-is to the
+  # qqbot home channel (QQBOT_HOME_CHANNEL). The port stays on the Docker network.
+  webhook:
+    enabled: true
+    extra:
+      port: 8644
+      routes:
+        ha-alert:
+          deliver_only: true
+          deliver: qqbot
+          prompt: "{message}"
 
 memory:
   memory_enabled: true

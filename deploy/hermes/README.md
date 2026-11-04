@@ -305,6 +305,35 @@ Unit tests: `cd profile/mcp && python3 -m unittest test_home_history`
 - `SOUL.md` asks for a short “我查一下。” before web search so the speaker is
   not silent while searching, and forbids any text before device/memory tools.
 
+## QQ (chatting with 小七 and notifications)
+
+Hermes' built-in `qqbot` platform (QQ official bot API v2) connects when
+`QQ_APP_ID` / `QQ_CLIENT_SECRET` are in `.env`. The profile limits it to
+private chats with paired users (`dm_policy: pairing`, groups off), plain text
+(QQ's native markdown needs a separate approval) and the speaker's toolsets
+(`platform_toolsets.qqbot`).
+
+1. On q.qq.com add your QQ number to the bot's sandbox (开发 → 沙箱配置 →
+   消息列表配置) and add the bot by scanning its QR code; an unpublished bot
+   only talks to sandbox members.
+2. Send the bot any message; it replies with a pairing code. Approve it:
+   `docker exec -u hermes hermes /opt/hermes/.venv/bin/hermes pairing approve qqbot <code>`
+   (`pairing list` shows the user's openid).
+3. Put that openid in `.env` as `QQBOT_HOME_CHANNEL` and `docker compose up -d`.
+   Cron jobs and scripts then deliver there, without the model:
+   `docker exec -u hermes hermes /opt/hermes/.venv/bin/hermes send -t qqbot "text"`.
+   A bare openid is not accepted as a `-t` target until it is in Hermes'
+   channel directory, so use the home channel.
+
+Home Assistant alerts reach QQ through the `webhook` platform (port 8644, on
+the Docker network only): route `ha-alert` is `deliver_only`, so the posted
+`{"message": ...}` goes as-is to the qqbot home channel without the model. HA
+calls it with `rest_command.qq_notify`, authenticated by the header
+`X-Gitlab-Token: <WEBHOOK_SECRET>`; the HA side and the alert automations are in
+[`../homeassistant/qq_alerts.yaml`](../homeassistant/qq_alerts.yaml). Camera
+snapshots are pushed by person-watch itself (`deploy/person-watch`), because
+this route carries text only.
+
 ## Home Assistant (Mijia)
 
 The production Home Assistant with the Xiaomi Home integration lives in
