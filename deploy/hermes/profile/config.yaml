@@ -139,6 +139,12 @@ platforms:
           deliver: qqbot
           prompt: "{message}"
 
+# QQ text chats from paired users go through the speaker's tool-call guard
+# (profile/plugins/qq_guard runs xiaozhi-provider/hermes.py against the API server).
+plugins:
+  enabled:
+    - qq_guard
+
 memory:
   memory_enabled: true
   user_profile_enabled: true

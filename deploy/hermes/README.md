@@ -325,6 +325,25 @@ private chats with paired users (`dm_policy: pairing`, groups off), plain text
    A bare openid is not accepted as a `-t` target until it is in Hermes'
    channel directory, so use the home channel.
 
+Chats go through the speaker's tool-call guard. The `qq_guard` plugin
+(`profile/plugins/qq_guard`, enabled in `plugins.enabled`) answers a paired
+user's plain text message itself in `pre_gateway_dispatch`, with the same
+`xiaozhi-provider/hermes.py` the speaker uses (install.sh copies it into the
+plugin; compose mounts it at `/seed/xiaozhi-provider`):
+
+- Saved scene phrases and music requests run without the model.
+- A reply that claims a switch, a saved rule or a device state, but has no
+  tool call behind it in that turn, is dropped and the request is retried once.
+- Device, history and TV questions must call their tools.
+
+It calls Hermes' API server with the last six QQ exchanges (kept in
+`$HERMES_HOME/qq_guard_history.json`, reset after 30 idle minutes), so these
+turns are `api_server` sessions, like the speaker's. The real-time facts tell
+the model that the message is QQ text, from no room: an unspecified "开灯"
+gets a question back. Slash commands, images/voice/files, unpaired senders
+and any turn the provider fails on go to Hermes' own agent as before. Tests:
+`python3 -m unittest test_qq_guard`.
+
 Home Assistant alerts reach QQ through the `webhook` platform (port 8644, on
 the Docker network only): route `ha-alert` is `deliver_only`, so the posted
 `{"message": ...}` goes as-is to the qqbot home channel without the model. HA
