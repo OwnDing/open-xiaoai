@@ -1,0 +1,5 @@
+openvino>=2025.0
+av>=14.0
+pillow>=11.0
+numpy>=1.26
+tzdata

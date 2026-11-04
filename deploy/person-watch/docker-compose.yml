@@ -1,0 +1,37 @@
+# person-watch: logs every person the two home cameras see (see README.md).
+# cams.env (RTSP URLs with passwords) and .env (HA token) stay on the mini PC only.
+services:
+  person-watch:
+    build: .
+    image: local/person-watch:1.0
+    container_name: person-watch
+    restart: unless-stopped
+    env_file:
+      - cams.env
+      - .env
+    environment:
+      TZ: Asia/Shanghai
+      CAM_LABELS: keting=客厅,lianlang=连廊
+      HA_URL: http://homeassistant:8123
+      PUBLIC_URL: http://192.168.5.15:18110
+      DEBUG_DETS: "1"
+    ports:
+      - "18110:8080"
+    volumes:
+      # Named volume: SQLite is unreliable on Windows bind mounts.
+      - person-watch-data:/data
+    # Stay small and yield to the wake-word container when the CPU is busy.
+    cpus: 1.0
+    cpu_shares: 256
+    mem_limit: 512m
+    networks:
+      - xiaozhi
+
+volumes:
+  person-watch-data:
+    name: person-watch-data
+
+networks:
+  xiaozhi:
+    external: true
+    name: xiaozhi-server_default

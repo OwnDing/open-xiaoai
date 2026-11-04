@@ -1,0 +1,77 @@
+# person-watch：摄像头有人记录
+
+客厅和连廊两台海康摄像头只要拍到人，就记录一次"有人"事件，并保存抓拍图。全天运行。
+
+```text
+子码流 RTSP（768×432 / 704×576 H.265）
+  └─ 每秒取 2 帧 → 96 px 缩略图做画面变动检测（OSD 文字区域不算）
+       └─ 画面在动（最多每秒 1 次）/ 有人时每 5 秒 / 平时每 60 秒
+            └─ Intel person-detection-0202（OpenVINO，1 个 CPU 线程）
+                 └─ 10 秒内命中 2 次 → 事件开始；60 秒没再看到人 → 事件结束
+                      ├─ 抓拍：取主码流下一个关键帧（1080p，0–2 秒内），再检测一遍并画框
+                      ├─ SQLite + JPEG（命名卷 person-watch-data，保留 30 天）
+                      ├─ 网页 http://192.168.5.15:18110
+                      └─ HA：binary_sensor.person_keting / binary_sensor.person_lianlang
+```
+
+- 模型：[person-detection-0202](https://docs.openvino.ai/2023.3/omz_models_model_person_detection_0202.html)（Intel Open Model Zoo，Apache-2.0，1.8 M 参数，3.6 MB）。它只认人，在构建镜像时下载。输入尺寸会按每台摄像头的画面比例调整：客厅 576×320，连廊 480×384。
+- 抓拍时机：
+  - 事件开始时抓一张；
+  - 人数比之前多时再抓一张（两张至少间隔 10 秒）；
+  - 人一直在的话，每 10 分钟抓一张。
+
+  抓拍优先用 1080p 关键帧。关键帧里没认出人（人只露一部分，或者刚好走开）时，就把子码流检测到的框画在 1080p 图上。拿不到主码流时退回子码流图。
+- 资源（N100 上实测）：
+  - 两路子码流一直解码，约 0.05 核。
+  - 每次检测约 70–80 ms（单线程）。客厅有人走动时每秒检测一次，整个容器约 0.1–0.2 核。
+  - 内存约 130 MB。
+
+  容器设置了 `cpus: 1.0` 和 `cpu_shares: 256`，进程 `nice 10`，CPU 紧张时优先让给唤醒词容器。
+
+## 部署（mini PC）
+
+```powershell
+cd C:\Users\djcmy\Documents\develop\ai\open-xiaoai\deploy\person-watch
+# 摄像头地址（含密码）从 HA 的 generic 摄像头配置生成，只留在 mini PC 上，不进 git
+docker exec -i homeassistant python3 - < cams_from_ha.py > cams.env
+# HA 令牌：HA 网页 → 左下角用户 → 安全 → 长期访问令牌 → 创建（名字 person-watch），
+# 把 HA_TOKEN=<令牌> 写进 .env。不写也能运行，只是不更新 HA 传感器。
+docker compose up -d --build
+```
+
+`create_ha_token.py` 也可以用现有的管理员令牌，通过 HA websocket 创建令牌（用法见文件开头）。
+
+## 查看记录
+
+- 网页：`http://192.168.5.15:18110`，按天、按摄像头列出事件和抓拍。可选设置 `WEB_USER` / `WEB_PASSWORD` 加 Basic 认证。不设的话，局域网里谁都能打开。
+- 接口：`/api/events?date=2026-11-04&cam=keting` 返回 JSON；`/health` 返回每台摄像头是否在线、检测次数、累计推理耗时。
+- HA：
+  - `binary_sensor.person_keting`（客厅摄像头有人）
+  - `binary_sensor.person_lianlang`（连廊摄像头有人）
+
+  有人时状态为 `on`，摄像头断流超过 60 秒变成 `unavailable`。属性里有 `max_persons`、`event_start` 和 `last_snapshot`（抓拍网址）。HA 自己保留 30 天历史。
+
+  这两个实体是通过 REST 写入的，没有 unique_id；person-watch 每分钟重发一次，所以 HA 重启后会自动恢复。
+
+## 调参
+
+在 `docker-compose.yml` 的 `environment` 里设置：
+
+| 变量 | 默认 | 作用 |
+| --- | --- | --- |
+| `THRESH` | 0.5 | 置信度阈值 |
+| `MIN_BOX_H` | 0.08 | 人框最小高度（占画面比例），更小的框不算 |
+| `OSD_MASKS` | 时间、名字、Wi-Fi 三块 | `x1,y1,x2,y2;...`（0–1）。这些区域不参与画面变动检测，框有一半以上落在里面的也不算人 |
+| `START_HITS` / `END_AFTER_S` | 2 / 60 | 开始事件需要的命中次数 / 多久没看到人算结束 |
+| `KEEPALIVE_S` / `IDLE_CHECK_S` | 5 / 60 | 有人时 / 没人时的定期检测间隔 |
+| `PERIODIC_SNAPSHOT_S` | 600 | 人一直在时的抓拍间隔 |
+| `KEEP_DAYS` | 30 | 保留天数 |
+| `DEBUG_DETS` | 1（试运行期） | 把每次检测的原始结果写进 `/data/debug/dets-日期.jsonl`，用于调阈值 |
+
+## 测速
+
+`bench.py` 直接拉子码流跑检测，打印延迟和 CPU 占用，并保存画了框的帧：
+
+```powershell
+docker run --rm --env-file cams.env -e DURATION=60 -v %CD%\bench-out:/out local/person-watch:1.0 python bench.py
+```
