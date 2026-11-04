@@ -11,6 +11,7 @@
                       ├─ 抓拍：取主码流下一个关键帧（1080p，0–2 秒内），再检测一遍并画框
                       ├─ SQLite + JPEG（命名卷 person-watch-data，保留 30 天）
                       ├─ 网页 http://192.168.5.15:18110
+                      ├─ QQ：连廊事件开始时推送抓拍图（QQ_NOTIFY_CAMS）
                       └─ HA webhook → 模板传感器 binary_sensor.person_keting / person_lianlang
 ```
 
@@ -59,6 +60,20 @@ HA 端（只需做一次）：
   有人时状态为 `on`，摄像头断流超过 60 秒变成 `unavailable`。属性里有 `max_persons`、`event_start` 和 `last_snapshot`（抓拍网址）。HA 自己保留 30 天历史。
 
   person-watch 每分钟重发一次当前状态；模板传感器在 HA 重启后也会恢复之前的状态。
+
+## QQ 推送
+
+`QQ_NOTIFY_CAMS`（compose 里设成 `lianlang`）列出的摄像头，每次事件开始时，用 QQ 官方机器人接口把那张抓拍图发到你的 QQ 私聊。图上带一行说明：哪台摄像头、时间、几个人，以及记录网页链接。
+
+- 凭据和接收人写在 `.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`、`QQ_OPENID`。它们和 Hermes 的 QQ 机器人是同一套（见 `deploy/hermes/README.md` 的 QQ 一节）。
+- 同一台摄像头 `QQ_COOLDOWN_S`（120 秒）内最多推送一次。
+- 图片发不出去时，改发纯文字。
+
+这一路直接调用 QQ 接口，不经过 Hermes，因为 Hermes 的 webhook 推送只能发文字。
+
+其他告警（漏水、电量低、摄像头监控中断）走 HA 自动化 → Hermes → QQ，见 `deploy/homeassistant/qq_alerts.yaml`。
+
+person-watch 每分钟还会调用一次 webhook `person-watch-heartbeat`，更新 `sensor.person_watch_heartbeat`（"person-watch 最后上报"）。HA 用它判断服务是否停了：状态没变时 HA 不会刷新传感器的上报时间，所以不能用 `binary_sensor` 来判断。
 
 ## 调参
 

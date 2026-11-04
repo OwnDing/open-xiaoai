@@ -17,6 +17,8 @@ services:
       HA_WEBHOOK: person-watch-
       PUBLIC_URL: http://192.168.5.15:18110
       DEBUG_DETS: "1"
+      # QQ push of each new 连廊 event (QQ_APP_ID / QQ_CLIENT_SECRET / QQ_OPENID in .env).
+      QQ_NOTIFY_CAMS: lianlang
     ports:
       - "18110:8080"
     volumes:

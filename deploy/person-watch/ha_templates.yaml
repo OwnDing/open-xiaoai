@@ -41,3 +41,17 @@
         last_event_start: "{{ trigger.json.attributes.last_event_start | default(none) }}"
         last_event_end: "{{ trigger.json.attributes.last_event_end | default(none) }}"
         last_snapshot: "{{ trigger.json.attributes.last_snapshot | default(none) }}"
+
+# Stamped every minute by person-watch; HA's "QQ告警：摄像头监控中断" fires when it goes stale.
+- triggers:
+    - trigger: webhook
+      webhook_id: person-watch-heartbeat
+      allowed_methods: [POST]
+      local_only: true
+  sensor:
+    - name: person-watch 最后上报
+      unique_id: person_watch_heartbeat
+      default_entity_id: sensor.person_watch_heartbeat
+      device_class: timestamp
+      icon: mdi:heart-pulse
+      state: "{{ now().isoformat() }}"

@@ -22,6 +22,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections import deque
 from datetime import datetime, timedelta
@@ -64,6 +65,10 @@ PUBLIC_URL = env("PUBLIC_URL", "").rstrip("/")
 PORT = int(env("PORT", "8080"))
 WEB_USER, WEB_PASSWORD = env("WEB_USER", ""), env("WEB_PASSWORD", "")
 DEBUG_DETS = env("DEBUG_DETS", "") == "1"
+# QQ push (official bot API, private chat): the start snapshot of an event on these cameras.
+QQ_APP_ID, QQ_CLIENT_SECRET, QQ_OPENID = env("QQ_APP_ID", ""), env("QQ_CLIENT_SECRET", ""), env("QQ_OPENID", "")
+QQ_NOTIFY_CAMS = {c for c in env("QQ_NOTIFY_CAMS", "").split(",") if c}
+QQ_COOLDOWN_S = float(env("QQ_COOLDOWN_S", "120"))
 # On-screen text (time, camera name, Wi-Fi icon) as x1, y1, x2, y2 fractions:
 # ignored for motion, and a box mostly inside one is not a person.
 OSD_MASKS = [tuple(float(v) for v in m.split(",")) for m in env("OSD_MASKS", "0,0,0.75,0.12;0.7,0.88,1,1;0.85,0,1,0.08").split(";") if m]
@@ -224,11 +229,20 @@ class HomeAssistant:
             log.warning("HA update for %s failed: %r", name, e)
 
     def heartbeat(self):
-        # Re-post every minute so the sensors come back after an HA restart.
+        # Re-post every minute so the sensors come back after an HA restart. HA keeps
+        # an identical state as is, so with webhooks a separate "heartbeat" webhook
+        # stamps sensor.person_watch_heartbeat for HA's "监控中断" alert.
         while True:
             time.sleep(60)
             for name in list(self.states):
                 self.push(name)
+            if HA_URL and HA_WEBHOOK:
+                req = urllib.request.Request(f"{HA_URL}/api/webhook/{HA_WEBHOOK}heartbeat", data=b"{}", method="POST",
+                                             headers={"Content-Type": "application/json"})
+                try:
+                    urllib.request.urlopen(req, timeout=5).read()
+                except Exception as e:
+                    log.warning("HA heartbeat failed: %r", e)
 
 
 class Camera(threading.Thread):
@@ -384,12 +398,77 @@ class Camera(threading.Thread):
         self.snapper.put((self, self.event, reason, dets, frame.to_image(), now_local()))
 
 
+class QQNotifier(threading.Thread):
+    """Sends an image with a caption to one QQ user through the official bot API (C2C)."""
+
+    TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
+    API = "https://api.sgroup.qq.com"
+
+    def __init__(self):
+        super().__init__(name="qq", daemon=True)
+        self.jobs = queue.Queue(maxsize=10)
+        self.token, self.expires = "", 0.0
+        self.last_sent = {}
+
+    @staticmethod
+    def enabled():
+        return bool(QQ_APP_ID and QQ_CLIENT_SECRET and QQ_OPENID and QQ_NOTIFY_CAMS)
+
+    def notify(self, cam, text, image_path):
+        now = time.monotonic()
+        if cam not in QQ_NOTIFY_CAMS or now - self.last_sent.get(cam, -1e9) < QQ_COOLDOWN_S:
+            return
+        self.last_sent[cam] = now
+        try:
+            self.jobs.put_nowait((text, image_path))
+        except queue.Full:
+            log.warning("QQ queue full, dropped: %s", text)
+
+    def post(self, url, body, headers=None):
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                     headers={"Content-Type": "application/json", **(headers or {})})
+        try:
+            return json.loads(urllib.request.urlopen(req, timeout=30).read() or b"{}")
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"HTTP {e.code}: {e.read()[:300].decode(errors='replace')}") from None
+
+    def api(self, path, body):
+        if time.time() > self.expires - 60:
+            r = self.post(self.TOKEN_URL, {"appId": QQ_APP_ID, "clientSecret": QQ_CLIENT_SECRET})
+            self.token, self.expires = r["access_token"], time.time() + int(r["expires_in"])
+        return self.post(self.API + path, body, {"Authorization": f"QQBot {self.token}"})
+
+    def send(self, text, image_path=None):
+        seq = int(time.time() * 1000) % 1_000_000_000
+        if image_path:
+            with open(image_path, "rb") as f:
+                data = base64.b64encode(f.read()).decode()
+            up = self.api(f"/v2/users/{QQ_OPENID}/files", {"file_type": 1, "file_data": data, "srv_send_msg": False})
+            body = {"msg_type": 7, "media": {"file_info": up["file_info"]}, "content": text, "msg_seq": seq}
+        else:
+            body = {"msg_type": 0, "content": text, "msg_seq": seq}
+        return self.api(f"/v2/users/{QQ_OPENID}/messages", body)
+
+    def run(self):
+        while True:
+            text, image_path = self.jobs.get()
+            try:
+                self.send(text, image_path)
+                log.info("QQ sent: %s", text.splitlines()[0])
+            except Exception as e:
+                log.warning("QQ image send failed (%r), sending text only", e)
+                try:
+                    self.send(text)
+                except Exception as e2:
+                    log.warning("QQ send failed: %r", e2)
+
+
 class Snapper(threading.Thread):
     """Saves snapshots off the camera threads: the main stream's next key frame, else the sub-stream frame."""
 
-    def __init__(self, detector, store, ha):
+    def __init__(self, detector, store, ha, qq=None):
         super().__init__(name="snapper", daemon=True)
-        self.detector, self.store, self.ha = detector, store, ha
+        self.detector, self.store, self.ha, self.qq = detector, store, ha, qq
         self.jobs = queue.Queue(maxsize=20)
         self.font = ImageFont.load_default(size=28)
         self.small_font = ImageFont.load_default(size=14)
@@ -460,6 +539,10 @@ class Snapper(threading.Thread):
                        last_snapshot=ev["last_snapshot"])
         log.info("%s snapshot %s (%s in %.1f s, %d person(s))", cam.name, rel, "1080p" if hd else "sub-stream",
                  grab_s, len(dets))
+        if self.qq and reason == "start":
+            link = f"\n记录：{PUBLIC_URL}/?date={day}&cam={cam.name}" if PUBLIC_URL else ""
+            self.qq.notify(cam.name, f"{cam.label}有人 · {ts:%m-%d %H:%M:%S} · {len(dets)} 人{link}",
+                           os.path.join(SNAP_DIR, rel))
 
 
 PAGE_CSS = """
@@ -595,7 +678,12 @@ def main():
         raise SystemExit("CAMS is empty")
     store, ha = Store(), HomeAssistant()
     detector = Detector(MODEL)
-    snapper = Snapper(detector, store, ha)
+    qq = None
+    if QQNotifier.enabled():
+        qq = QQNotifier()
+        qq.start()
+        log.info("QQ push on for: %s", ", ".join(sorted(QQ_NOTIFY_CAMS)))
+    snapper = Snapper(detector, store, ha, qq)
     snapper.start()
     cams = [Camera(n, label, sub, main, detector, store, ha, snapper) for n, label, sub, main in cams_cfg]
     for c in cams:
