@@ -256,22 +256,33 @@ DONE_CLAIM = re.compile(r"好了|搞定|已经|已(开|关|调|设)|(开|关|调
 # After "……要我保存吗？" a "好" must reach the tool that really saves: the model
 # has answered "好了，保存好了" without saving anything, and (2026-10-22) has
 # called home_rule_save again, which only checks, while saying it saved.
-ASKED_TO_SAVE = re.compile(r"保存吗|要我保存|存下来吗|要不要保存")
-ASKED_TO_DELETE = re.compile(r"删掉吗|要我删|删除吗|要不要删")
+# The question may quote what it asks about: 你是要说“确认保存”吗？, 要删掉“厨房没人关灯”吗？
+ASKED_TO_SAVE = re.compile(r"保存[^，,。！!？?]{0,24}?吗|要我保存|存(?:下来|上|起来)[^，,。！!？?]{0,24}?吗|要不要(?:保存|存)")
+ASKED_TO_DELETE = re.compile(r"删(?:掉|除)?[^，,。！!？?]{0,24}?吗|要我删|要不要删")
 AGREEMENT = re.compile(
     r"^(?:好的?|好啊|好吧|可以的?|可以啊|行的?|行啊|嗯+|对的?|对啊|是的?|是啊|没问题|确认|确定|要的?"
     r"|保存吧?|保存一下|存吧|存下来|删吧|删掉吧|删了吧|谢谢你?|小七)+$"
 )
+# A short answer naming the very thing asked about agrees, even misheard
+# around it: "保存职" (2026-11-05), "确认删除".
+AGREE_HINT = {"save": re.compile(r"保存|存|确认|确定"), "delete": re.compile(r"删|确认|确定")}
+REFUSAL = re.compile(r"不|别|算了|取消|等等|等一下|再想")
+SHORT_ANSWER = 6
+RULE_SAVE_TOOL = "mcp__home_rules__home_rule_save"
 RULE_CONFIRM_TOOL = "mcp__home_rules__home_rule_confirm"
 RULE_DELETE_TOOL = "mcp__home_rules__home_rule_delete"
+RULE_LIST_TOOL = "mcp__home_rules__home_rules_list"
 SAVE_RETRY_NOTE = (
     "（系统提示：用户已经同意保存了，但你上一次没有调用 mcp__home_rules__home_rule_confirm 就回答了，"
     "其实什么都没有保存。现在调用它（不用参数），它会按原样保存刚才检查并复述过的内容，"
     "不要再调用 home_rule_save；再根据工具结果回答。）"
 )
+# home_rule_delete only checks, like home_rule_save: a misheard "拿回去" once
+# deleted a linkage at once (2026-11-05).
 DELETE_RETRY_NOTE = (
-    "（系统提示：用户已经同意删除了，但你上一次没有调用 mcp__home_rules__home_rule_delete 就回答了，"
-    "其实什么都没有删除。现在只为你上一句刚问过的那一项调用它，再根据工具结果回答。）"
+    "（系统提示：用户已经同意删除了，但你上一次没有调用 mcp__home_rules__home_rule_confirm 就回答了，"
+    "其实什么都没有删除。现在调用它（不用参数），它会删掉刚才登记并问过的那几项，"
+    "不要再调用 home_rule_delete；再根据工具结果回答。）"
 )
 SCHEDULE_RETRY_NOTE = (
     "（系统提示：这是设备控制请求，但你上一次没有调用任何工具就回答了。"
@@ -339,16 +350,58 @@ SENTENCE_BREAK = re.compile(r"[。！!？?；;\n]")
 # only checks. Counted in a rule conversation, or when the sentence names one.
 RULE_SUBJECT = re.compile(r"规则|联动|场景|口令|自动化|[一两几这那每]条")
 RULE_SAVED = re.compile(
-    r"(?:保存|创建|新建|添加)(?:好|完|成功)?了(?![吗么没嘛吧？?])|(?:存|建)(?:好|完|下来|下)了(?![吗么没嘛吧？?])"
-    r"|已(?:经)?(?:帮你|给你|为你)?(?:保存|存好|存下|建好|创建|新建|添加)(?!的)|(?:保存|创建)(?:成功|完成|完毕)"
+    r"(?:保存|创建|新建|添加)(?:好|完|成功)?了(?![吗么没嘛吧？?])"
+    r"|(?:存|建|加)(?:好|完|下来|下|上|进去|起来|回来)了(?![吗么没嘛吧？?])"
+    r"|已(?:经)?(?:帮你|给你|为你)?(?:保存|存好|存下|存上|建好|创建|新建|添加|加上|加好|加回)(?!的)"
+    r"|(?:保存|创建)(?:成功|完成|完毕)"
 )
 RULE_SAVE_PROMISE = re.compile(r"(?:接着|继续|再|马上|这就|现在|立刻|我来|我先|我再)(?:帮你|给你)?保存")
+# 2026-11-05: "已经删掉了，现在还剩五条规则。" with nothing deleted.
+RULE_DELETED = re.compile(
+    r"(?:删|删除|去掉|撤掉|撤销)(?:好|完|掉|成功)?了(?![吗么没嘛吧？?])"
+    r"|已(?:经)?(?:帮你|给你|为你)?(?:删|去掉|撤掉|撤销)"
+)
+RULE_DELETE_PROMISE = re.compile(
+    r"(?:我|这就|马上|现在|立刻)(?:会|来|去|先|再|这就|马上|现在|立刻)*(?:帮你|给你)?(?:删掉|删除|删了|去掉|撤掉)"
+)
+# Scheduled jobs and memories are deleted by their own tools.
+NOT_A_RULE = re.compile(r"定时|任务|闹钟|记忆")
 # "刚才已经保存好了" retells an earlier turn; a duration ("十分钟关灯那条") does not.
 RECENT_PAST = re.compile(r"刚才|刚刚|之前|上次|昨天|前天|早就|早前|先前")
 SAVE_CLAIM_NOTE = (
     "（系统提示：你上一次的回答说保存了（或者说接着保存），但这一轮你没有调用 "
     "mcp__home_rules__home_rule_confirm，其实什么都没有保存。用户已经同意保存的，现在调用它（不用参数），"
-    "它会按原样保存刚才检查过的内容；用户还没同意的，先复述再问要不要保存。按工具结果如实回答。）"
+    "它会按原样保存刚才检查过的内容，不要换个名字再调用 home_rule_save；"
+    "用户还没同意的，先复述再问要不要保存。按工具结果如实回答。）"
+)
+DELETE_CLAIM_NOTE = (
+    "（系统提示：你上一次的回答说删掉了，但这一轮你没有调用 mcp__home_rules__home_rule_confirm，"
+    "其实什么都没有删除：home_rule_delete 只登记，home_rule_confirm 才会删。用户已经同意删除的，"
+    "现在调用 home_rule_confirm（不用参数）；还没同意的，先调用 mcp__home_rules__home_rule_delete 登记，"
+    "再说出要删的名字，问要不要删。按工具结果如实回答。）"
+)
+# A read-back the user can say yes to must come from a check this very turn:
+# confirming saves only what was checked (2026-11-05: read back unchecked, "确认保存", nothing saved).
+CHECK_FIRST_NOTE = (
+    "（系统提示：你上一次问要不要保存，但这一轮没有调用 mcp__home_rules__home_rule_save 检查，"
+    "用户说好也存不下来。先调用 home_rule_save 检查（要几条就检查几条，一次调用一条），"
+    "再按它返回的 devices 复述，问要不要保存。）"
+)
+DELETE_CHECK_NOTE = (
+    "（系统提示：你上一次说要删或者问要不要删，但这一轮没有调用 mcp__home_rules__home_rule_delete 登记，"
+    "用户说好也删不掉。先调用它（它只登记，不会真删），再按它返回的 to_delete 说出名字，问要不要删；"
+    "用户已经同意删除的，调用 mcp__home_rules__home_rule_confirm。）"
+)
+# "现在有几条规则？" was answered from the chat history, which held claims
+# that never happened (2026-11-05: "六条" when five were saved).
+RULE_LIST_ASK = re.compile(
+    r"(?:几|多少)条|哪(?:几|些)|都有(?:什么|啥)|列(?:一下|出来)|念(?:一下|一遍)|(?:播报|报|说)一下"
+)
+RULE_TOPIC = re.compile(r"规则|联动|场景|自动化")
+RULES_LIST_NOTE = (
+    "（系统提示：这是问已保存的场景和联动有几条、是哪些，但你上一次没有查询就回答了。"
+    "聊天记录里说过的数量和“保存了”“删掉了”不一定是真的，现在调用 mcp__home_rules__home_rules_list，"
+    "按它返回的结果回答。）"
 )
 CLAIM_RETRY_NOTE = (
     "（系统提示：你上一次的回答说已经操作了设备，或者说马上去操作，但这一轮你没有调用任何操作设备的工具，"
@@ -356,6 +409,8 @@ CLAIM_RETRY_NOTE = (
     "ha_call_service（用户说的是已保存场景的口令，就调用 mcp__home_rules__home_rule_run）；"
     "只是聊天或回答问题，就直接回答，不要说你操作了设备。）"
 )
+CLAIM_NOTES = {"act": CLAIM_RETRY_NOTE, "save": SAVE_CLAIM_NOTE, "delete": DELETE_CLAIM_NOTE,
+               "check": CHECK_FIRST_NOTE, "delete_check": DELETE_CHECK_NOTE, "tv": TV_CLAIM_NOTE}
 # "没开呀" right after a reply that said it was done: that reply may never have
 # reached the device. Handled like a command.
 NOT_DONE = re.compile(
@@ -428,7 +483,19 @@ def asked_about_rule(dialogue):
 def confirms_rule(dialogue, request):
     """"save" or "delete" when the user agreed to what the assistant just asked about."""
     asked = asked_about_rule(dialogue)
-    return asked if asked and AGREEMENT.match(_spoken(request)) else None
+    if not asked:
+        return None
+    spoken = _spoken(request)
+    if AGREEMENT.match(spoken):
+        return asked
+    if len(spoken) <= SHORT_ANSWER and AGREE_HINT[asked].search(spoken) and not REFUSAL.search(spoken):
+        return asked
+    return None
+
+
+def is_rule_list_question(text):
+    """"现在有几条规则？", "有哪些联动", "播报一下刚建的两条规则"."""
+    return bool(RULE_TOPIC.search(text) and RULE_LIST_ASK.search(text))
 
 
 def is_clarifying(reply):
@@ -555,20 +622,40 @@ def _claims(pattern, text, promise=False, past=PAST):
     return False
 
 
-def claim_need(sentence, acted=False, looked=False, saved=False, rule_context=False, tv=False, tv_context=False):
-    """"act", "look", "save" or "tv" when the sentence claims more than this turn's tools back up, else None.
+def claim_need(sentence, acted=False, looked=False, saved=False, rule_context=False, tv=False, tv_context=False,
+               save_checked=True, delete_checked=True):
+    """"act", "look", "save", "delete", "check", "delete_check" or "tv" when the sentence
+    claims more than this turn's tools back up, else None.
 
+    saved: home_rule_confirm ran (it saves and deletes); save_checked / delete_checked:
+    home_rule_save / home_rule_delete ran, so the user can be asked to agree.
     tv: a TV tool ran; tv_context: the turn is about the TV, so a show's title is the TV's too.
     """
     text = sentence.strip()
     if not text:
         return None
-    # Before `acted`: home_rule_save is a home_rules tool, but it only checks.
-    if not saved and (rule_context or RULE_SUBJECT.search(text)):
+    # Before `acted`: home_rule_save and home_rule_delete are home_rules tools, but they only check.
+    about_rule = rule_context or RULE_SUBJECT.search(text)
+    if not saved and about_rule:
         if _claims(RULE_SAVED, text, past=RECENT_PAST):
             return "save"
         if not QUESTION_END.search(text) and _claims(RULE_SAVE_PROMISE, text, promise=True, past=RECENT_PAST):
             return "save"
+    if about_rule and not NOT_A_RULE.search(text):
+        if _claims(RULE_DELETED, text, past=RECENT_PAST):
+            if not saved:
+                return "delete"
+        # Even after a confirm: "（两条都存了，）现在删掉重复的那一条。" and the turn ended (2026-11-05).
+        elif (not delete_checked and not QUESTION_END.search(text)
+              and _claims(RULE_DELETE_PROMISE, text, promise=True, past=RECENT_PAST)):
+            return "delete_check"
+    # Asking to save or delete is about a scene or linkage, named or not ("有人就开灯，要我保存吗？").
+    # Not a choice ("要不要保存成场景，还是联动？"): that still gathers what to check.
+    if not saved and not NOT_A_RULE.search(text) and "还是" not in text:
+        if not save_checked and ASKED_TO_SAVE.search(text):
+            return "check"
+        if not delete_checked and ASKED_TO_DELETE.search(text):
+            return "delete_check"
     # A title can read as a condition: 《如果奔跑是我的人生》.
     bare = SHOW_TITLE.sub("《》", text)
     tv_set = TV_SET.search(text) or tv_context and TV_WEB.search(text)
@@ -723,6 +810,7 @@ class LLMProvider(LLMProviderBase):
         self.claim_failed_reply = config.get("claim_failed_reply", "这次没有真正执行成功，你再说一遍吧。")
         self.state_failed_reply = config.get("state_failed_reply", "这次没查到设备现在的状态，你再问我一次吧。")
         self.save_failed_reply = config.get("save_failed_reply", "这次没有保存成功，你再说一遍吧。")
+        self.delete_failed_reply = config.get("delete_failed_reply", "这次没有删成，你再说一遍吧。")
         self.scenes = None
         ha_url = config.get("ha_url") or os.environ.get("HASS_URL")
         ha_token = config.get("ha_token") or os.environ.get("HASS_TOKEN")
@@ -902,7 +990,10 @@ class LLMProvider(LLMProviderBase):
         elif self.tool_guard and confirms_rule(dialogue, request) == "save":
             required, note, reason = RULE_CONFIRM_TOOL, SAVE_RETRY_NOTE, "确认保存后未调用确认保存工具"
         elif self.tool_guard and confirms_rule(dialogue, request) == "delete":
-            required, note, reason = RULE_DELETE_TOOL, DELETE_RETRY_NOTE, "确认删除后未调用删除工具"
+            required, note, reason = RULE_CONFIRM_TOOL, DELETE_RETRY_NOTE, "确认删除后未调用确认工具"
+        elif self.tool_guard and is_rule_list_question(request):
+            # Before is_rule_request: "几条规则" names a rule but teaches nothing.
+            required, note, reason = RULE_LIST_TOOL, RULES_LIST_NOTE, "规则数量问题未查询"
         elif self.tool_guard and is_rule_request(request):
             # Teaching or managing a scene/linkage: answered normally (see RULE_WORDS).
             required = note = reason = None
@@ -929,7 +1020,7 @@ class LLMProvider(LLMProviderBase):
         # "好，我给你打开《X》" is a TV claim while the TV is being talked about.
         tv_context = bool(is_tv_talk(request) or TV_PICK.search(request) and not NOT_TV.search(request)
                           or after_tv_talk(dialogue))
-        context = {"rule_context": rule_context, "tv_context": tv_context}
+        context = {"rule_context": rule_context, "tv_context": tv_context, "asked": asked_about_rule(dialogue)}
         claim = dict(context)
         if note is None:
             state = {"spoken": False, "held": "", "tools": []}
@@ -941,8 +1032,7 @@ class LLMProvider(LLMProviderBase):
             yield from self._clean(self._with_search_filler(events, state))
             if claim.get("need"):
                 logger.bind(tag=TAG).warning(f"没有调用工具就说做了，已丢弃并重试: {request} -> {claim['held'][:60]}")
-                note = {"act": CLAIM_RETRY_NOTE, "save": SAVE_CLAIM_NOTE, "tv": TV_CLAIM_NOTE}.get(
-                    claim["need"], STATE_RETRY_NOTE)
+                note = CLAIM_NOTES.get(claim["need"], STATE_RETRY_NOTE)
                 yield from self._final_attempt(self._with_note(dialogue, sent, note), context=context)
                 return
             if state["spoken"]:
@@ -984,6 +1074,10 @@ class LLMProvider(LLMProviderBase):
             yield from self._clean(iter([held]))
             return
         held = claim.get("held") or held
+        if claim.get("need") in ("check", "delete_check"):
+            # A rule read back unchecked: "……一分钟之后自动关厨房灯" is also a command,
+            # whose note would switch the light now.
+            note, reason = CLAIM_NOTES[claim["need"]], "没有检查就问要不要保存或删除"
         logger.bind(tag=TAG).warning(f"{reason}，已丢弃回答并重试: {request} -> {held[:60]}")
         yield from self._final_attempt(self._with_note(dialogue, sent, note), context=context)
 
@@ -1006,8 +1100,9 @@ class LLMProvider(LLMProviderBase):
         yield from self._clean(self._with_search_filler(self._claim_checked(self._events(dialogue), claim), state))
         if claim.get("need"):
             logger.bind(tag=TAG).warning(f"重试后仍没有调用工具就说做了: {claim['held'][:60]}")
-            yield {"act": self.claim_failed_reply, "save": self.save_failed_reply, "tv": self.claim_failed_reply}.get(
-                claim["need"], self.state_failed_reply)
+            yield {"act": self.claim_failed_reply, "save": self.save_failed_reply, "check": self.save_failed_reply,
+                   "delete": self.delete_failed_reply, "delete_check": self.delete_failed_reply,
+                   "tv": self.claim_failed_reply}.get(claim["need"], self.state_failed_reply)
         elif not state["spoken"] and silent_reply:
             yield silent_reply
 
@@ -1019,9 +1114,10 @@ class LLMProvider(LLMProviderBase):
         "我再执行一次") or a state ("显示是关着") without a tool behind it is
         held, together with everything after it, until such a tool runs; the
         held text was its lead-in and is dropped. If the turn ends first,
-        claim["need"] is "act", "look", "save" or "tv" and claim["held"] what was never
+        claim["need"] is a claim_need() kind and claim["held"] what was never
         spoken. claim["rule_context"] (set by the caller) counts a bare "保存好了",
-        claim["tv_context"] a show's title as the TV's.
+        claim["tv_context"] a show's title as the TV's; claim["asked"] is what the
+        previous reply asked to save or delete, already checked then.
         """
         if not self.tool_guard:
             yield from events
@@ -1029,11 +1125,13 @@ class LLMProvider(LLMProviderBase):
         rule_context = claim.get("rule_context", False)
         tv_context = claim.get("tv_context", False)
         acted = looked = saved = tv = False
+        # Asked again ("你是说要保存吗？"): it rests on the check made when first asked.
+        save_checked, delete_checked = claim.get("asked") == "save", claim.get("asked") == "delete"
         pending, held, need = "", [], None
         for kind, value in events:
             if kind == "tool":
                 if pending and not need:
-                    need = claim_need(pending, acted, looked, saved, rule_context, tv, tv_context)
+                    need = claim_need(pending, acted, looked, saved, rule_context, tv, tv_context, save_checked, delete_checked)
                     if need:
                         held = [pending]
                     else:
@@ -1042,10 +1140,13 @@ class LLMProvider(LLMProviderBase):
                 acted = acted or value.startswith(ACT_TOOLS)
                 looked = looked or acted or value.startswith(LOOK_TOOLS)
                 saved = saved or value.startswith(RULE_CONFIRM_TOOL)
+                save_checked = save_checked or value.startswith(RULE_SAVE_TOOL)
+                delete_checked = delete_checked or value.startswith(RULE_DELETE_TOOL)
                 # A scheduled job backs up "明早七点我来打开电视".
                 tv = tv or value.startswith((TV_TOOLS, "cronjob"))
                 promised = ""
-                if need and {"save": saved, "tv": tv, "look": looked}.get(need, acted):
+                if need and {"save": saved, "delete": saved, "check": saved or save_checked,
+                             "delete_check": delete_checked, "tv": tv, "look": looked}.get(need, acted):
                     # "我先在电视上搜一下，稍等。" tells what the slow TV tool is doing: spoken
                     # once it runs. Other lead-ins are dropped.
                     said = "".join(held)
@@ -1077,13 +1178,13 @@ class LLMProvider(LLMProviderBase):
                 part, pending = pending[: end.end()], pending[end.end():]
                 if NARRATION.search(part):
                     continue
-                need = claim_need(part, acted, looked, saved, rule_context, tv, tv_context)
+                need = claim_need(part, acted, looked, saved, rule_context, tv, tv_context, save_checked, delete_checked)
                 if need:
                     held, pending = [part, pending], ""
                     break
                 yield "text", part
         if pending and not need and not NARRATION.search(pending):
-            need = claim_need(pending, acted, looked, saved, rule_context, tv, tv_context)
+            need = claim_need(pending, acted, looked, saved, rule_context, tv, tv_context, save_checked, delete_checked)
             if need:
                 held = [pending]
             else:

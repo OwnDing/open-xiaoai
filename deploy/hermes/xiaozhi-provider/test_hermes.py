@@ -357,13 +357,31 @@ class ProviderTests(unittest.TestCase):
                      "告诉我书房灯开着没"):
             self.assertFalse(hermes.is_rule_request(text), text)
 
-    def test_rule_read_back_without_tool_is_spoken_once(self):
+    def test_rule_read_back_is_spoken_once(self):
         spoken, requests = self.run_turn(
             "以后我说我回来了，就打开客厅灯",
-            [("text", "以后你说“我回来了”，我就打开客厅灯，要我保存吗？")],
+            [("tool", hermes.RULE_SAVE_TOOL), ("text", "以后你说“我回来了”，我就打开客厅灯，要我保存吗？")],
         )
         self.assertEqual(spoken, "以后你说“我回来了”，我就打开客厅灯，要我保存吗？")
         self.assertEqual(len(requests), 1)
+
+    def test_a_read_back_needs_a_check_this_turn(self):
+        # 2026-11-05: read back without home_rule_save, so "确认保存" had nothing to save.
+        asked = {"role": "assistant", "content": "好，想创建什么规则？请把触发条件和要执行的动作告诉我。"}
+        understood = "我按“厨房人体传感器从有人变成无人后持续一分钟，就关闭厨房灯”来理解。"
+        readback = "厨房人在传感器从有人变成没人一分钟后，关闭厨房灯开关，要我保存吗？"
+        spoken, requests = self.run_dialogue(
+            [user("好的，再创建一条规则。"), asked, user("厨房传感器从有人变成无人，一分钟之后自动关厨房灯。")],
+            [("text", understood + "这条规则确认保存吗？")],
+            [("tool", hermes.RULE_SAVE_TOOL), ("text", readback)],
+        )
+        self.assertEqual(spoken, understood + readback)
+        self.assertIn(hermes.CHECK_FIRST_NOTE, requests[1])
+        # Read as a command, whose note would switch the light now: the retry asks for the check instead.
+        spoken, requests = self.run_turn("厨房有人就打开厨房灯", [("text", "有人就开厨房灯，要我保存吗？")],
+                                         [("tool", hermes.RULE_SAVE_TOOL), ("text", "有人就开厨房灯，要我保存吗？")])
+        self.assertEqual(spoken, "有人就开厨房灯，要我保存吗？")
+        self.assertIn(hermes.CHECK_FIRST_NOTE, requests[1])
 
     def run_dialogue(self, dialogue, *streams):
         provider = hermes.LLMProvider({"api_key": "x"})
@@ -404,22 +422,78 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(spoken, "保存好了。")
         self.assertIn(hermes.SAVE_RETRY_NOTE, requests[1])
 
-    def test_agreeing_to_delete_needs_the_delete_tool(self):
+    def test_agreeing_to_delete_needs_the_confirm_tool(self):
+        # home_rule_delete only checks; home_rule_confirm deletes.
         asked = {"role": "assistant", "content": "要我删掉“洗衣提醒”吗？"}
         spoken, requests = self.run_dialogue(
             [user("把洗衣提醒删了"), asked, user("对")],
-            [("tool", hermes.RULE_CONFIRM_TOOL), ("text", "删好了。")],
             [("tool", hermes.RULE_DELETE_TOOL), ("text", "删好了。")],
+            [("tool", hermes.RULE_CONFIRM_TOOL), ("text", "删好了。")],
         )
         self.assertEqual(spoken, "删好了。")
         self.assertIn(hermes.DELETE_RETRY_NOTE, requests[1])
+        spoken, requests = self.run_dialogue(
+            [user("把洗衣提醒删了"), asked, user("确认删除")],
+            [("tool", hermes.RULE_CONFIRM_TOOL), ("text", "删好了。")],
+        )
+        self.assertEqual((spoken, len(requests)), ("删好了。", 1))
+
+    def test_asking_to_delete_needs_a_delete_check(self):
+        # 2026-11-05: "要不要删掉其中一条？" after only listing; "其中一条" → "已经删掉了" with nothing deleted.
+        listed = {"role": "assistant", "content": "现在有六条规则，厨房那两条重复了，要不要删掉其中一条？"}
+        spoken, requests = self.run_dialogue(
+            [user("现在有几条规则"), listed, user("其中一条。")],
+            [("text", "我会删掉重复的那条。已经删掉了，现在还剩五条规则。")],
+            [("tool", hermes.RULE_DELETE_TOOL), ("text", "要删掉“厨房没人关灯”吗？")],
+        )
+        # Asked before, so the promise may stand; "已经删掉了" may not.
+        self.assertEqual(spoken, "我会删掉重复的那条。要删掉“厨房没人关灯”吗？")
+        self.assertIn(hermes.DELETE_CLAIM_NOTE, requests[1])
+        spoken, requests = self.run_turn("把厨房重复的那条规则删掉",
+                                         [("tool", hermes.RULE_DELETE_TOOL), ("text", "要删掉“厨房没人关灯”吗？")])
+        self.assertEqual((spoken, len(requests)), ("要删掉“厨房没人关灯”吗？", 1))
+
+    def test_a_promise_to_delete_after_saving_is_not_the_end(self):
+        # 2026-11-05: two equal linkages saved, then "现在删掉重复的那一条。" and nothing more.
+        asked = {"role": "assistant", "content": "厨房从有人变成没人，过一分钟就关闭厨房灯开关。要我保存吗？"}
+        spoken, requests = self.run_dialogue(
+            [user("加回来。"), asked, user("保存职。")],
+            [("tool", hermes.RULE_CONFIRM_TOOL),
+             ("text", "我发现它把两条内容一样的规则都保存了，现在删掉重复的那一条。")],
+            [("tool", hermes.RULE_DELETE_TOOL), ("text", "有一条重复的“厨房没人关灯”，要删掉吗？")],
+        )
+        self.assertEqual(spoken, "有一条重复的“厨房没人关灯”，要删掉吗？")
+        self.assertIn(hermes.DELETE_CHECK_NOTE, requests[1])
+
+    def test_rule_counts_are_looked_up(self):
+        # 2026-11-05 21:28: "现在有六条规则。" from the chat history; five were saved.
+        spoken, requests = self.run_turn("现在有几条规则？", [("text", "现在有六条规则。")],
+                                         [("tool", hermes.RULE_LIST_TOOL), ("text", "现在有五条规则。")])
+        self.assertEqual(spoken, "现在有五条规则。")
+        self.assertIn(hermes.RULES_LIST_NOTE, requests[1])
+        spoken, requests = self.run_turn("有哪些联动", [("tool", hermes.RULE_LIST_TOOL), ("text", "有两条。")])
+        self.assertEqual((spoken, len(requests)), ("有两条。", 1))
+        for asked in ("现在有几条规则？", "有几条规则啊。", "啊，再播报一下刚刚新建的两条规则。", "有哪些场景",
+                      "联动都有什么"):
+            self.assertTrue(hermes.is_rule_list_question(asked), asked)
+        for other in ("再创建一条规则。", "第一条改成从无人变成有人自动打开厨房灯。", "厨房重复的一条删掉一条。",
+                      "以后我说晚安就关所有灯", "客厅灯开着吗"):
+            self.assertFalse(hermes.is_rule_list_question(other), other)
 
     def test_agreement_phrases(self):
         dialogue = [user("x"), self.ASKED]
-        for said in ("好", "好的，保存吧", "对，保存。", "嗯嗯", "可以的", "确认保存", "好的谢谢"):
+        for said in ("好", "好的，保存吧", "对，保存。", "嗯嗯", "可以的", "确认保存", "好的谢谢", "保存职。"):
             self.assertEqual(hermes.confirms_rule(dialogue + [user(said)], said), "save", said)
-        for said in ("不要", "不用了", "等一下", "Does.", "改成十分钟"):
+        for said in ("不要", "不用了", "等一下", "Does.", "改成十分钟", "把钱。", "不保存", "先别保存"):
             self.assertIsNone(hermes.confirms_rule(dialogue + [user(said)], said), said)
+        # 2026-11-05: the question quoted the answer it expected.
+        quoted = {"role": "assistant", "content": "没太听清，你是要说“确认保存”吗？如果确认，我就把这条存上。"}
+        self.assertEqual(hermes.confirms_rule([user("x"), quoted, user("确认保存。")], "确认保存。"), "save")
+        deleting = [user("x"), {"role": "assistant", "content": "要删掉“厨房没人关灯”吗？"}]
+        for said in ("删吧", "确认删除", "对"):
+            self.assertEqual(hermes.confirms_rule(deleting + [user(said)], said), "delete", said)
+        for said in ("其中一条。", "不删", "拿回去。"):
+            self.assertIsNone(hermes.confirms_rule(deleting + [user(said)], said), said)
 
     STUDY_ASKED = {"role": "assistant", "content": "规则做成两条：有人时打开书房灯；人走开十分钟后，再把灯关掉。要我保存吗？"}
     STUDY = [user("创建一个规则，书房有人就开灯，人走了十分钟再关灯"), STUDY_ASKED, user("Does.")]
@@ -472,7 +546,7 @@ class ProviderTests(unittest.TestCase):
             "把阳台漏水那五条联动删掉",
             [("tool", "mcp__home_rules__home_rules_list"), ("tool", hermes.RULE_DELETE_TOOL),
              ("tool", hermes.RULE_DELETE_TOOL)],
-            [("tool", "mcp__home_rules__home_rules_list"), ("text", "好，那五条都删掉了。")],
+            [("tool", hermes.RULE_CONFIRM_TOOL), ("text", "好，那五条都删掉了。")],
         )
         self.assertEqual(spoken, "好，那五条都删掉了。")
         self.assertIn("你上一次调用了 mcp__home_rules__home_rules_list、mcp__home_rules__home_rule_delete，", requests[1])
@@ -746,7 +820,7 @@ class ClaimTests(unittest.TestCase):
 
     def test_chat_about_devices_is_not_a_claim(self):
         for reply in ("空调开着睡觉容易着凉。", "鱼缸灯开太久了容易长藻，晚上记得把灯关了。",
-                      "要不要我帮你把灯关了？", "就是以后你说“我回来了”，我就打开客厅灯和餐厅灯，要我保存吗？",
+                      "要不要我帮你把灯关了？",
                       "刚才开了客厅灯和餐厅灯。", "灯光指令偶尔会没送到，重发一次就好。", "那说明灯是好的，是我这边指令没送到。",
                       "你是说刚才那次灯没开，还是说不用关了？", "空调还是开着比较好。", "冰箱只能看到门开着还是关着。"):
             spoken, requests = self.run_turn("嗯", [("text", reply)])
@@ -779,6 +853,27 @@ class ClaimTests(unittest.TestCase):
             self.assertIsNone(hermes.claim_need(reply, acted=True, rule_context=True), reply)
         # A memory saved outside a rule conversation is not a scene or linkage.
         self.assertIsNone(hermes.claim_need("好，保存好了。", acted=True))
+        # 2026-11-05: "好的，已经存上了。" was not counted as a save claim.
+        for reply in ("好的，已经存上了。", "那条联动加回来了。"):
+            self.assertEqual(hermes.claim_need(reply, acted=True, rule_context=True), "save", reply)
+
+    def test_rule_delete_claims(self):
+        for reply in ("已经删掉了，现在还剩五条规则。", "重复的那条删掉了。", "好，那条联动删除成功了。"):
+            self.assertEqual(hermes.claim_need(reply, acted=True, rule_context=True), "delete", reply)
+            self.assertIsNone(hermes.claim_need(reply, acted=True, saved=True, rule_context=True), reply)
+        for reply in ("现在删掉重复的那一条。", "我会删掉重复的那条。", "要我删掉吗？", "要删掉“厨房没人关灯”吗？"):
+            self.assertEqual(hermes.claim_need(reply, rule_context=True, delete_checked=False), "delete_check", reply)
+            self.assertIsNone(hermes.claim_need(reply, rule_context=True, delete_checked=True), reply)
+        for reply in ("刚才那条已经删掉了。", "十一点那个定时任务删掉了。", "还没删。", "那条记忆删掉了。"):
+            self.assertIsNone(hermes.claim_need(reply, rule_context=True, delete_checked=False), reply)
+
+    def test_asking_to_save_needs_a_check(self):
+        for reply in ("要我保存吗？", "这条规则确认保存吗？", "有人就开灯，要我保存吗？", "要不要存下来吗？"):
+            self.assertEqual(hermes.claim_need(reply, save_checked=False), "check", reply)
+            self.assertIsNone(hermes.claim_need(reply, save_checked=True), reply)
+            self.assertIsNone(hermes.claim_need(reply, saved=True, save_checked=False), reply)
+        for reply in ("要不要保存成场景，还是联动？", "要我把这个记到记忆里保存吗？", "已经保存好了，还有别的吗？"):
+            self.assertNotEqual(hermes.claim_need(reply, saved=True, save_checked=False), "check", reply)
 
     def test_english_before_a_tool_is_still_dropped(self):
         spoken, _ = self.run_turn(
@@ -869,7 +964,7 @@ class SceneShortcutTests(unittest.TestCase):
         self.assertIn(hermes.RETRY_NOTE, provider.requests[1])
 
     def test_teaching_a_scene_is_not_running_it(self):
-        provider = self.provider([("text", "以后你说“我回来了”，我就开客厅灯，要我保存吗？")])
+        provider = self.provider([("tool", hermes.RULE_SAVE_TOOL), ("text", "以后你说“我回来了”，我就开客厅灯，要我保存吗？")])
         spoken = "".join(provider.response("s", [user("以后我说我回来了，就打开客厅灯")]))
         self.assertEqual(spoken, "以后你说“我回来了”，我就开客厅灯，要我保存吗？")
         self.assertEqual(provider.scenes.ran, [])

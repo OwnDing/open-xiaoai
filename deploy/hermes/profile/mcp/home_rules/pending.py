@@ -6,6 +6,10 @@ home_rule_save. On 2026-10-22 it called the check again instead, while saying
 it had saved. Now home_rule_save records each checked item here and
 home_rule_confirm saves the latest batch exactly as it was read back.
 
+Deletions wait here too (op "delete"): a misheard "拿回去" once deleted a
+linkage at once (2026-11-05). And checking the same linkage again under
+another name replaces the earlier check, or one "好" saved it twice.
+
 A JSON file, so every Hermes process running this server sees the same list.
 """
 
@@ -48,15 +52,32 @@ class Pending:
             print(f"home_rules: cannot write {self.path}: {e}", file=sys.stderr)
             return False
 
-    def record(self, kind, name, args, saved=False):
-        """A checked item (saved=True: saved at once, e.g. a one-shot linkage); False if not stored."""
+    def record(self, kind, name, args, saved=False, op="save"):
+        """A checked item (saved=True: already done, e.g. a one-shot linkage); False if not stored.
+
+        op "save" (args: home_rule_save's) or "delete" (args: {"id": ...}).
+        """
         now = self.clock()
         name = name.strip()
         with self._lock:
-            items = [i for i in self._load() if (i["kind"], i["name"]) != (kind, name)]
-            items.append({"kind": kind, "name": name, "args": args, "checked_at": now,
+            items = [i for i in self._load() if not self._replaces(op, kind, name, args, i)]
+            items.append({"op": op, "kind": kind, "name": name, "args": args, "checked_at": now,
                           "saved_at": now if saved else None})
             return self._store(items)
+
+    @staticmethod
+    def _replaces(op, kind, name, args, item):
+        """The same item, or an unsaved check of the same scene/linkage under another name."""
+        if (op_of(item), item["kind"]) != (op, kind):
+            return False
+        if item["name"] == name:
+            return True
+        return op == "save" and not item["saved_at"] and _behaviour(item["args"]) == _behaviour(args)
+
+    def deleting(self):
+        """Ids checked for deletion lately (deleted or not): no longer twins of a new check."""
+        with self._lock:
+            return {i["args"].get("id") for i in self._load() if op_of(i) == "delete"}
 
     def batch(self, names=None):
         """(items to save, items of that batch already saved).
@@ -76,3 +97,12 @@ class Pending:
             newest = max((i["checked_at"] for i in pool), default=0)
             chosen = [i for i in pool if i["checked_at"] >= newest - BATCH_S]
         return [i for i in chosen if not i["saved_at"]], [i for i in chosen if i["saved_at"]]
+
+
+def op_of(item):
+    return item.get("op", "save")
+
+
+def _behaviour(args):
+    """What a check would do, whatever it is called or how it is described."""
+    return {k: v for k, v in (args or {}).items() if k != "summary"}

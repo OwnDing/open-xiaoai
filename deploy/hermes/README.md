@@ -160,12 +160,16 @@ skill tells the model how to use them.
   saved). Without names, the confirmation takes the items checked within two
   minutes of the newest one, so a request needing several linkages (有人开灯 +
   没人十分钟关灯) is checked item by item and confirmed once, while a check the
-  user turned down earlier is left out. `home_rule_delete` likewise takes
-  several `names` in one call: a turn has `max_turns: 8` tool calls, and five
-  deletes one by one used them up before the answer. A one-shot linkage (`once: true`,
-  “这次洗完提醒我”) saves at once, switches itself off after running and is
-  deleted on the next listing. Saving the same behaviour under another name
-  returns `already_saved` instead of a duplicate.
+  user turned down earlier is left out. Deleting works the same way:
+  `home_rule_delete` only records what it would delete (`to_delete`) and
+  `home_rule_confirm` deletes it (2026-11-05: a misheard “拿回去” deleted a
+  linkage at once). It takes several `names` in one call: a turn has
+  `max_turns: 8` tool calls, and five deletes one by one used them up before the
+  answer. A one-shot linkage (`once: true`, “这次洗完提醒我”) saves at once,
+  switches itself off after running and is deleted on the next listing. Checking
+  or saving the same behaviour under another name returns `already_saved`
+  instead of a duplicate, and a second check of it replaces the first (one
+  “好” once saved two equal linkages).
 - Saved scene phrases are written into `SOUL.md` between `<!-- scenes:start -->`
   and `<!-- scenes:end -->` (at server start and after every scene change);
   Hermes reads SOUL.md for each new conversation, so a phrase taught once works
@@ -173,11 +177,17 @@ skill tells the model how to use them.
   installing the profile.
 - The provider guard leaves teaching phrases (`RULE_WORDS`: 以后我说…, 当…的时候,
   …了提醒我, 每天…) to the normal path. When the user agrees to an “要我保存吗？”
-  it requires `home_rule_confirm` (`home_rule_delete` after “要我删掉吗？”),
-  retrying once (logged as `确认保存后未调用确认保存工具`). In a rule conversation, or
-  when a sentence names a rule, “保存好了”, “建好了” or “接着保存……” is held
-  until `home_rule_confirm` runs, like a device claim; the retry tells the model
-  to confirm, and a second unbacked claim is replaced by “这次没有保存成功，你再说一遍吧。”
+  or “要我删掉吗？” (a short answer naming it counts, misheard or not: “保存职”)
+  it requires `home_rule_confirm`, retrying once (logged as
+  `确认保存后未调用确认保存工具`). In a rule conversation, or when a sentence names
+  a rule, “保存好了”, “存上了”, “删掉了” or “接着保存……” is held until
+  `home_rule_confirm` runs, like a device claim; the retry tells the model to
+  confirm, and a second unbacked claim is replaced by “这次没有保存成功，你再说一遍吧。”
+  (“这次没有删成……”). Asking “要我保存吗？” (or to delete, or promising “现在删掉……”)
+  needs `home_rule_save` (`home_rule_delete`) in the same turn, unless the
+  previous reply already asked: a read-back that was never checked has nothing
+  to confirm. “现在有几条规则？”, “有哪些联动” need `home_rules_list`: the chat
+  history holds claims that never happened.
 - The first save call also returns `devices`, the actions worded with the
   names Home Assistant has for the chosen entities (“打开客厅灯”, “打开餐厅灯”).
   The model reads those back instead of its own summary, so a wrong entity is

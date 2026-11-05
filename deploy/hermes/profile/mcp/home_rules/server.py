@@ -67,7 +67,8 @@ class Action(BaseModel):
 INSTRUCTIONS = (
     "Scenes (run when the user says their phrase) and linkages (run by Home Assistant when "
     "something happens). Read the home-rules skill first. Always confirm with the user before "
-    "saving (home_rule_save checks, home_rule_confirm saves after the user agrees) or deleting."
+    "saving or deleting: home_rule_save and home_rule_delete only check, home_rule_confirm does "
+    "it after the user agrees."
 )
 server = MCPServer("home_rules", instructions=INSTRUCTIONS)
 
@@ -115,6 +116,7 @@ def home_rule_save(
     checked one call per item, read back together and confirmed once.
     One-shot linkages (once=true, "just the next time": 这次洗完提醒我) save at once and
     switch themselves off after running. Saving with an existing name replaces it.
+    already_saved: the same thing is saved under `name` already; nothing new to save.
     ok=false with problems: fix them or ask the user; nothing is saved.
     summary: one Chinese sentence describing it, used when reading back and listing.
     """
@@ -136,6 +138,15 @@ def _save(kind, name, args, confirmed):
             return {"ok": False, "problems": problems}
         existing = rules.find(items, name, kind)
         exact = [i for i in existing if i["name"] == name.strip()]
+        # The agent does not see earlier tool results (xiaozhi forwards text only),
+        # so after a retry it may check or save again what is saved under another name.
+        twin = None if exact else _saved_twin(ha, items, kind, config)
+        if twin:
+            PENDING.record(kind, twin["name"], args, saved=True)
+            return {"ok": True, "already_saved": True, "kind": kind, "name": twin["name"],
+                    "summary": config["description"].removeprefix(rules.CREATED_BY),
+                    "next": f"Nothing new: this is already saved as “{twin['name']}”. Tell the user so; "
+                            "do not save it again under another name."}
         if not confirmed and not (kind == "rule" and args["once"]):
             if not PENDING.record(kind, name, args):
                 return {"ok": False, "problems": ["现在没法记下待确认的内容，稍后再试"]}
@@ -147,18 +158,6 @@ def _save(kind, name, args, confirmed):
                             "exactly as `devices` names them (those are the devices that will really be "
                             "switched), and ask whether to save; if they agree, call home_rule_confirm. "
                             "If the request needs more items, check each of them before reading back."}
-        if not exact:
-            # The agent does not see earlier tool results (xiaozhi forwards text only),
-            # so after a retry it may save what is already saved under another name.
-            config_kind = "script" if kind == "scene" else "automation"
-            for item in (i for i in items if i["kind"] == kind):
-                try:
-                    if rules.same_behaviour(kind, ha.get_config(config_kind, item["id"]), config):
-                        PENDING.record(kind, name, args, saved=True)
-                        return {"ok": True, "already_saved": True, "kind": kind, "name": item["name"],
-                                "summary": config["description"]}
-                except HAError:
-                    pass
         object_id = exact[0]["id"] if exact else rules.new_id(kind)
         ha.save_config("script" if kind == "scene" else "automation", object_id, config)
         PENDING.record(kind, name, args, saved=True)
@@ -170,29 +169,83 @@ def _save(kind, name, args, confirmed):
         return {"ok": False, "problems": [f"Home Assistant 出错：{e}"]}
 
 
+def _saved_twin(ha, items, kind, config):
+    """A saved scene or linkage that does exactly what config does, under another name.
+
+    One being deleted does not count ("删掉旧的，换个名字再建"); Home Assistant may
+    still list it for a moment after the delete.
+    """
+    config_kind = "script" if kind == "scene" else "automation"
+    deleting = PENDING.deleting()
+    for item in (i for i in items if i["kind"] == kind and i["id"] not in deleting):
+        try:
+            if rules.same_behaviour(kind, ha.get_config(config_kind, item["id"]), config):
+                return item
+        except HAError:
+            pass
+    return None
+
+
 @server.tool()
 def home_rule_confirm(names: Optional[list[str]] = None) -> dict[str, Any]:
-    """Save what home_rule_save checked and you read back, once the user agrees ("好", "保存吧").
+    """Do what home_rule_save or home_rule_delete checked and you read back, once the user agrees
+    ("好", "保存吧", "删吧").
 
-    Without names it saves everything checked in this exchange and not saved yet,
-    exactly as checked; names (as given to home_rule_save) picks some of them.
-    `saved` is what is saved now: tell the user only those. Anything you read back
-    that is not in `saved` was NOT saved; check it with home_rule_save first.
+    Without names it does everything checked in this exchange and not done yet,
+    exactly as checked; names (as given to home_rule_save / home_rule_delete) picks some of them.
+    `saved` and `deleted` are what happened now: tell the user only those. Anything you
+    read back that is in neither was NOT done; check it first.
     """
-    to_save, already = PENDING.batch(names)
-    if not to_save:
+    to_do, already = PENDING.batch(names)
+    if not to_do:
         if already:
-            return {"ok": True, "saved": [], "already_saved": [_described(i) for i in already]}
-        return {"ok": False, "problems": ["没有等待确认的场景或联动：先用 home_rule_save 检查，"
+            return {"ok": True, "saved": [], "deleted": [], **_already(already)}
+        return {"ok": False, "problems": ["没有等待确认的保存或删除：先用 home_rule_save 或 home_rule_delete 检查，"
                                           "复述给用户，用户同意后再确认。"]}
-    saved, problems = [], []
-    for item in to_save:
+    # Deletions first: "删掉旧的，换成……" must not find the old one as a twin.
+    deleted, problems = _delete([i for i in to_do if pending.op_of(i) == "delete"])
+    saved, twins = [], []
+    for item in (i for i in to_do if pending.op_of(i) == "save"):
         result = _save(item["kind"], item["name"], item["args"], confirmed=True)
-        if result.get("ok"):
+        if result.get("already_saved"):
+            twins.append({"kind": item["kind"], "name": result["name"], "summary": result["summary"]})
+        elif result.get("ok"):
             saved.append(_described(item))
         else:
             problems += [f"{item['name']}：{p}" for p in result.get("problems", [])]
-    return {"ok": not problems, "saved": saved, **({"problems": problems} if problems else {})}
+    result = {"ok": not problems, "saved": saved, "deleted": deleted}
+    if twins:
+        result["already_saved"] = twins
+    return {**result, "problems": problems} if problems else result
+
+
+def _delete(items):
+    """Delete the checked items that are still there: (deleted, problems)."""
+    if not items:
+        return [], []
+    try:
+        ha = _ha()
+        there = {i["id"] for i in rules.owned(ha.states())}
+        deleted = []
+        for item in items:
+            if item["args"].get("id") in there:
+                ha.delete_config("script" if item["kind"] == "scene" else "automation", item["args"]["id"])
+            PENDING.record(item["kind"], item["name"], item["args"], saved=True, op="delete")
+            deleted.append(_described(item))
+        if any(item["kind"] == "scene" for item in items):
+            _sync_scene_index(ha)
+        return deleted, []
+    except HAError as e:
+        return [], [f"Home Assistant 出错：{e}"]
+
+
+def _already(items):
+    """What an earlier confirm did, by op: {"already_saved": [...], "already_deleted": [...]}."""
+    result = {}
+    for item in items:
+        key = "already_deleted" if pending.op_of(item) == "delete" else "already_saved"
+        result.setdefault(key, []).append(_described(item))
+    return result
 
 
 def _described(item):
@@ -240,10 +293,12 @@ def home_rule_delete(
     kind: Optional[Literal["scene", "rule"]] = None,
     names: Optional[list[str]] = None,
 ) -> dict[str, Any]:
-    """Delete voice-created scenes or linkages by name (confirm with the user first).
+    """Check which voice-created scenes or linkages a deletion removes; nothing is deleted yet.
 
-    Several at once go in names, in this one call: a voice turn has only a few
-    tool calls, and one call per item has used them all up before the answer.
+    Returns needs_confirmation and to_delete: ask the user whether to delete exactly
+    those, by name. After they agree, call home_rule_confirm (no arguments); only
+    what is in its `deleted` is gone. Several at once go in names, in this one call:
+    a voice turn has only a few tool calls.
     """
     wanted = [n for n in [name, *(names or [])] if n and n.strip()]
     if not wanted:
@@ -251,23 +306,34 @@ def home_rule_delete(
     try:
         ha = _ha()
         items = rules.owned(ha.states())
-        deleted, missing, problems = [], [], []
+        found, missing, problems = [], [], []
         for each in wanted:
             matches = rules.find(items, each, kind)
             if len(matches) > 1:
                 problems.append(f"“{each}”有多个匹配：" + "、".join(i["name"] for i in matches) + "，请说具体是哪个")
             elif not matches:
                 missing.append(each)
-            elif matches[0] not in deleted:
-                deleted.append(matches[0])
-        for item in deleted:
-            ha.delete_config("script" if item["kind"] == "scene" else "automation", item["id"])
-        if any(item["kind"] == "scene" for item in deleted):
-            _sync_scene_index(ha)
+            elif matches[0] not in found:
+                found.append(matches[0])
         if missing:
-            left = "、".join(i["name"] for i in items if i not in deleted) or "（没有）"
-            problems.append(f"没有找到“{'、'.join(missing)}”，现在还有：{left}")
-        result = {"ok": not problems, "deleted": [{"name": i["name"], "kind": i["kind"]} for i in deleted]}
+            left = "、".join(i["name"] for i in items) or "（没有）"
+            problems.append(f"没有找到“{'、'.join(missing)}”，现在有：{left}")
+        to_delete = []
+        for item in found:
+            config_kind = "script" if item["kind"] == "scene" else "automation"
+            try:
+                description = ha.get_config(config_kind, item["id"]).get("description", "")
+            except HAError:
+                description = ""
+            args = {"id": item["id"], "summary": str(description).removeprefix(rules.CREATED_BY)}
+            if not PENDING.record(item["kind"], item["name"], args, op="delete"):
+                return {"ok": False, "problems": ["现在没法记下待确认的内容，稍后再试"]}
+            to_delete.append(_described({**item, "args": args}))
+        if not to_delete:
+            return {"ok": False, "problems": problems}
+        result = {"ok": False, "needs_confirmation": True, "to_delete": to_delete,
+                  "next": "Nothing deleted yet. Ask the user whether to delete exactly these, naming them; "
+                          "if they agree, call home_rule_confirm."}
         return {**result, "problems": problems} if problems else result
     except HAError as e:
         return {"ok": False, "problems": [f"Home Assistant 出错：{e}"]}

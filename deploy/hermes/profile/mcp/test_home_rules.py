@@ -285,9 +285,9 @@ class PendingTests(unittest.TestCase):
         return sorted(i["name"] for i in items)
 
     def test_items_checked_together_are_confirmed_together(self):
-        self.store.record("rule", "书房有人开灯", {"summary": "有人开灯"})
+        self.store.record("rule", "书房有人开灯", {"actions": ["on"], "summary": "有人开灯"})
         later = self.at(20)  # another call, maybe another process: same file
-        later.record("rule", "书房没人十分钟关灯", {"summary": "没人关灯"})
+        later.record("rule", "书房没人十分钟关灯", {"actions": ["off"], "summary": "没人关灯"})
         to_save, already = later.batch()
         self.assertEqual(self.names(to_save), ["书房有人开灯", "书房没人十分钟关灯"])
         self.assertEqual(already, [])
@@ -315,14 +315,138 @@ class PendingTests(unittest.TestCase):
         self.assertEqual(self.at(pending.TTL_S + 1).batch(), ([], []))
 
     def test_names_pick_items(self):
-        self.store.record("rule", "书房有人开灯", {})
-        self.store.record("rule", "书房没人十分钟关灯", {})
+        self.store.record("rule", "书房有人开灯", {"actions": ["on"]})
+        self.store.record("rule", "书房没人十分钟关灯", {"actions": ["off"]})
         self.assertEqual(self.names(self.store.batch(["有人开灯"])[0]), ["书房有人开灯"])
 
     def test_unwritable_store_says_so(self):
         store = pending.Pending(os.path.join(self.tmp.name, "missing", "pending.json"))
         self.assertFalse(store.record("rule", "x", {}))
         self.assertEqual(store.batch(), ([], []))
+
+    def test_the_same_check_under_another_name_replaces_it(self):
+        # 2026-11-05: "厨房没人一分钟关灯" checked, then again as "厨房没人关灯"; one "好" saved both.
+        args = {"trigger": {"type": "state", "to": "off", "for_seconds": 60}, "actions": [{"service": "turn_off"}]}
+        self.store.record("rule", "厨房没人一分钟关灯", {**args, "summary": "没人一分钟关灯"})
+        self.at(20).record("rule", "厨房没人关灯", {**args, "summary": "没人关灯"})
+        self.at(25).record("rule", "厨房有人开灯", {"actions": [{"service": "turn_on"}], "summary": "有人开灯"})
+        self.assertEqual(self.names(self.at(30).batch()[0]), ["厨房有人开灯", "厨房没人关灯"])
+
+    def test_deletions_wait_apart_from_saves_of_the_same_name(self):
+        self.store.record("rule", "厨房没人关灯", {"id": "xiaoqi_rule_1"}, op="delete")
+        self.at(5).record("rule", "厨房没人关灯", {"summary": "新的"})
+        to_do, _ = self.at(10).batch()
+        self.assertEqual(sorted(pending.op_of(i) for i in to_do), ["delete", "save"])
+
+
+class FakeHA:
+    """Home Assistant for the server tools: STATES plus the scripts and automations saved here."""
+
+    def __init__(self):
+        self.configs = {}  # (kind, object_id) -> config
+
+    def states(self):
+        own = []
+        for (kind, object_id), config in self.configs.items():
+            if kind == "script":
+                own.append(state(f"script.{object_id}", "off", friendly_name=config["alias"]))
+            else:
+                own.append(state(f"automation.{object_id}", "on", friendly_name=config["alias"], id=object_id))
+        return [s for s in STATES if not s["entity_id"].startswith(("script.xiaoqi", "automation.xiao_qi"))] + own
+
+    def services(self):
+        return SERVICES
+
+    def get_config(self, kind, object_id):
+        return self.configs[(kind, object_id)]
+
+    def save_config(self, kind, object_id, config):
+        self.configs[(kind, object_id)] = config
+
+    def delete_config(self, kind, object_id):
+        del self.configs[(kind, object_id)]
+
+    def rules(self):
+        return sorted(c["alias"] for (kind, _), c in self.configs.items() if kind == "automation")
+
+
+LEAK_OFF = {"type": "state", "entity_id": "binary_sensor.leak", "to": "off", "from": "on", "for_seconds": 60}
+FISH_OFF = [{"type": "device", "entity_id": "switch.fish_tank", "service": "turn_off"}]
+
+
+class ServerTests(unittest.TestCase):
+    """The tools as the agent calls them (needs the mcp package, e.g. in the Hermes container)."""
+
+    def setUp(self):
+        try:
+            from home_rules import server
+        except ImportError as e:
+            self.skipTest(f"mcp not installed: {e}")
+        self.server, self.ha = server, FakeHA()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved_ha, self.saved_pending = server._ha, server.PENDING
+        server._ha = lambda: self.ha
+        server.PENDING = pending.Pending(os.path.join(self.tmp.name, "pending.json"))
+
+    def tearDown(self):
+        self.server._ha, self.server.PENDING = self.saved_ha, self.saved_pending
+        self.tmp.cleanup()
+
+    def check(self, name, trigger=LEAK_OFF, actions=FISH_OFF):
+        from home_rules.server import Action, Trigger
+        return self.server.home_rule_save("rule", name, [Action(**a) for a in actions], Trigger(**trigger),
+                                          summary=name)
+
+    def test_a_check_saves_nothing_until_confirmed(self):
+        self.assertTrue(self.check("没水关鱼缸")["needs_confirmation"])
+        self.assertEqual(self.ha.rules(), [])
+        self.assertEqual([i["name"] for i in self.server.home_rule_confirm()["saved"]], ["没水关鱼缸"])
+        self.assertEqual(self.ha.rules(), ["小七联动：没水关鱼缸"])
+
+    def test_checked_twice_under_two_names_is_saved_once(self):
+        self.check("厨房没人一分钟关灯")
+        self.check("厨房没人关灯")
+        result = self.server.home_rule_confirm()
+        self.assertEqual([i["name"] for i in result["saved"]], ["厨房没人关灯"])
+        self.assertEqual(self.ha.rules(), ["小七联动：厨房没人关灯"])
+
+    def test_checking_what_is_saved_under_another_name_says_so(self):
+        self.check("没水关鱼缸")
+        self.server.home_rule_confirm()
+        result = self.check("鱼缸没水关")
+        self.assertEqual((result["already_saved"], result["name"]), (True, "没水关鱼缸"))
+        self.assertEqual(self.server.home_rule_confirm()["saved"], [])
+        self.assertEqual(self.ha.rules(), ["小七联动：没水关鱼缸"])
+
+    def test_delete_waits_for_confirm(self):
+        self.check("没水关鱼缸")
+        self.server.home_rule_confirm()
+        result = self.server.home_rule_delete(names=["没水关鱼缸"])
+        self.assertTrue(result["needs_confirmation"])
+        self.assertEqual(result["to_delete"][0]["summary"], "没水关鱼缸")
+        self.assertEqual(self.ha.rules(), ["小七联动：没水关鱼缸"])  # a misheard "拿回去" deletes nothing
+        result = self.server.home_rule_confirm()
+        self.assertEqual(([i["name"] for i in result["deleted"]], result["saved"]), (["没水关鱼缸"], []))
+        self.assertEqual(self.ha.rules(), [])
+        self.assertEqual(self.server.home_rule_confirm()["already_deleted"][0]["name"], "没水关鱼缸")
+
+    def test_delete_of_an_unknown_name_lists_what_there_is(self):
+        self.check("没水关鱼缸")
+        self.server.home_rule_confirm()
+        result = self.server.home_rule_delete("厨房没人关灯")
+        self.assertFalse(result["ok"])
+        self.assertIn("现在有：没水关鱼缸", result["problems"][0])
+        self.assertNotIn("needs_confirmation", result)
+
+    def test_delete_old_and_save_new_in_one_confirm(self):
+        self.check("没水关鱼缸")
+        self.server.home_rule_confirm()
+        self.server.home_rule_delete("没水关鱼缸")
+        self.assertTrue(self.check("鱼缸没水关")["needs_confirmation"])  # the same linkage, renamed
+        result = self.server.home_rule_confirm()
+        self.assertEqual(([i["name"] for i in result["deleted"]], [i["name"] for i in result["saved"]]),
+                         (["没水关鱼缸"], ["鱼缸没水关"]))
+        self.assertEqual(self.ha.rules(), ["小七联动：鱼缸没水关"])
 
 
 if __name__ == "__main__":
