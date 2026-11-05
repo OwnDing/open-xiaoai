@@ -53,6 +53,7 @@ PROVIDER_CONFIG = {
     "claim_failed_reply": "这次没有真正执行成功，你再发一遍吧。",
     "state_failed_reply": "这次没查到设备现在的状态，你再问我一次吧。",
     "save_failed_reply": "这次没有保存成功，你再发一遍吧。",
+    "delete_failed_reply": "这次没有删成，你再发一遍吧。",
     "music_url": "http://host.docker.internal:4400",
     "timeout": {"connect": 3.0, "read": 120.0},
 }
