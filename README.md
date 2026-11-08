@@ -22,6 +22,7 @@
 - **会开口**：家里有事主动播报；夜里不打扰，漏水这种大事照样叫醒你。
 - **会放歌**：电脑里的歌直接在音箱上放，不联网、不用会员。“播放梁静茹的偶阵雨”“随便放一首”“暂停”“下一首”，还能问“曲库有多少首歌”。
 - **会管电视**：客厅的安卓电视也交给小七。“打开电视”“打开奇异果”“我想看狂飙第二集”“下一集”“电视音量调到十五”，找片、选集、播放控制都能做。
+- **会看家**：摄像头通过 RTSP 接入 Home Assistant，一个只认人的小模型全天运行，拍到人就记录和抓拍，连廊有人时把照片发到 QQ。
 
 **不用打开 App，不用写自动化，也没有预设的场景。** 每家的规矩不一样，全部由你用语音教会它。
 
@@ -126,6 +127,20 @@
 
 电视上跑的不是普通 App：TCL 不让第三方 App 在后台常驻（进入后台约 5 秒就被冻结），也不让用 adb 安装，所以助手像 scrcpy 一样由 adb 在电视上运行。电视重启后小七会自动把它拉起来，平时待机不影响。目前在 TCL 雷鸟（Android 11）上验收，奇异果是 TCL 版银河奇异果。👉 [小七电视助手（含 TCL 系统限制的调查记录）](deploy/tv-helper/README.md) · [视频：遥控器可以退休了，让小爱音箱接管整台电视](https://www.bilibili.com/video/BV1zJHK6gEyE)
 
+### 看家：摄像头拍到人就记下来
+
+作者家里的客厅和连廊各有一台海康摄像头，通过 RTSP 接入 Home Assistant，再由一个只认人的小模型全天盯着。2026-11-04 开始试运行，到 11-08 记录了 65 次有人事件（客厅 49 次、连廊 16 次），阈值用的是默认值，识别率很高。
+
+- **RTSP 接入 Home Assistant**：用 HA 自带的 Generic Camera 集成，填上摄像头的 RTSP 地址就行，不依赖厂商的云，画面在 HA 里直接看。
+- **只加一个小模型**：Intel 的 person-detection-0202，只认人，文件 3.6 MB。用 OpenVINO 在 CPU 上单线程运行，N100 小主机上一次检测约 85 毫秒，不需要显卡。
+- **平时几乎不占资源**：拉的是摄像头的子码流，先比较画面有没有变化，画面在动才跑模型。两路全天运行约 0.07 核，客厅有人走动时 0.1–0.2 核，内存约 155 MB；CPU 紧张时优先让给唤醒词。
+- **不会一闪就报**：10 秒内命中 2 次才算“有人”，60 秒没再看到人才算结束，人一直在只算一次事件。
+- **抓拍留证**：事件开始时抓一张 1080p 并画出人框，人变多时再抓，人一直在就每 10 分钟抓一张。记录和照片保留 30 天，网页上按天、按摄像头查看，网页可以设密码。
+- **和家里联动**：每台摄像头在 Home Assistant 里有一个“有人”传感器，能进历史记录，也能用来触发自动化。连廊有人时，抓拍图直接发到 QQ 私聊，同一台摄像头 2 分钟内最多推一次。
+- **画面留在家里**：拉流和检测都在家里完成，不经过大模型；只有推送到 QQ 的那张抓拍图会发给 QQ。
+
+人物检测是独立运行的服务，不依赖小七和大模型；用语音查询记录还没有专门做。👉 [摄像头人物检测](deploy/person-watch/README.md)
+
 ### 安全边界
 
 - 门锁、燃气、热水器、取暖器这类高风险设备，不允许放进场景或联动，需要时当面直接说。
@@ -176,12 +191,19 @@
                                                                   ├─ 设备控制与状态查询
                                                                   ├─ 场景（脚本）与联动（自动化）
                                                                   └─ 小七播报 → 客厅小爱
+
+客厅、连廊摄像头 ──RTSP──┬─ Home Assistant：Generic Camera，看实时画面
+                         └─ person-watch：子码流 → 画面变动检测 → 人物检测小模型（CPU）
+                              ├─ 1080p 抓拍 + 事件记录 → 网页（保留 30 天）
+                              ├─ “有人”传感器 → Home Assistant
+                              └─ 连廊有人 → QQ 私聊
 ```
 
 - **小智服务端**负责“耳朵和嘴”：语音识别、语音合成。**Hermes** 负责“想和做”：理解意图、调用工具、记住偏好。
 - **小爱桥接**在音箱这一侧听唤醒词、判断你什么时候说完，并消掉音箱自己的声音，所以小七说话时也能被打断。
 - **场景与联动**由一个小型 MCP 服务（`home_rules`）提供给 Hermes：校验、风险分级，再写入 Home Assistant。
 - **电视**由 MCP 服务 `tv_control` 控制：通过电视上的小七电视助手读屏、点击、按键、控制播放；开机借 Home Assistant 发小爱的红外。
+- **人物检测**由独立容器 `person-watch` 完成：直接拉摄像头的 RTSP 子码流，用 OpenVINO 在 CPU 上跑小模型，结果通过 webhook 写回 Home Assistant，不经过大模型。
 - **每台设备独立**：小爱用原生音色，电脑终端可选 Edge 流式或离线 Sherpa 语音。房间、音色、回答方式写在服务端配置里，不写死在程序中。
 
 ## 稳定性与体验
@@ -247,12 +269,14 @@
 3. 部署小爱桥接和小智服务端 👉 [小爱音箱接入小智 AI](examples/xiaozhi/README.md) · [TTS 输出模式](deploy/sherpa-tts/README.md)
 4. 部署 Home Assistant 并接入米家、海尔等设备，再部署 Hermes。定时任务、场景与联动、主动播报随 Hermes 配置一起安装，装好就能用语音教 👉 [Home Assistant](deploy/homeassistant/README.md) · [Hermes 部署](deploy/hermes/README.md)
 5. 可选：家里有安卓电视的，在电视上装好电视助手，小七就能管电视 👉 [小七电视助手](deploy/tv-helper/README.md)
+6. 可选：家里有 RTSP 摄像头的，接入 Home Assistant 后部署人物检测，拍到人就记录和抓拍 👉 [摄像头人物检测](deploy/person-watch/README.md)
 
 **不刷机：普通蓝牙 / USB 音箱**
 
 1. 在常开的电脑上部署小智服务端、Hermes 和 Home Assistant 👉 [Sherpa / 小智服务端](deploy/sherpa-tts/README.md) · [Hermes](deploy/hermes/README.md) · [Home Assistant](deploy/homeassistant/README.md)
 2. 把带麦克风的蓝牙音箱（或 USB 麦克风 + 音箱）接到电脑上，安装并运行语音终端 👉 [电脑语音终端](examples/voice-terminal/README.md)
 3. 可选：控制安卓电视 👉 [小七电视助手](deploy/tv-helper/README.md)
+4. 可选：RTSP 摄像头人物检测 👉 [摄像头人物检测](deploy/person-watch/README.md)
 
 **更多玩法**：[自定义唤醒词](examples/kws/README.md) · [接入 Gemini Live API](examples/gemini/README.md) · [多台音箱组立体声](examples/stereo/README.md)
 
@@ -266,6 +290,7 @@
 | [中途打断测试](docs/xiaoai-barge-in-test.md) | 播报时听清唤醒词的回声消除方案、录音测试和真机测试 |
 | [小七放本地音乐](docs/xiaoqi-music.md) | 离线放歌的工作方式、单独的音乐音量、曲库识别、实测记录 |
 | [小七电视助手](deploy/tv-helper/README.md) | 控制安卓电视：电视上的助手、开关机、奇异果找片选集、TCL 系统限制调查、没采用的方案 |
+| [摄像头人物检测](deploy/person-watch/README.md) | RTSP 摄像头接入 Home Assistant、小模型人物检测、抓拍记录、HA 传感器、QQ 推送、调参 |
 | [Home Assistant 接入](deploy/homeassistant/README.md) | 米家官方集成、HACS 与海尔智家集成、让小七认识新设备 |
 | [Hermes 部署说明](deploy/hermes/README.md) | 接入方式、定时任务、语音教的场景与联动、主动播报、工具调用防护 |
 | [电脑语音终端](examples/voice-terminal/README.md) | 安装、配置、开机自启、多设备共用一个后端 |
