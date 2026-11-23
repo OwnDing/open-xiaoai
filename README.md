@@ -1,5 +1,5 @@
 > [!NOTE]
-> **维护状态：活跃更新中。** 本项目最初 Fork 自 [idootop/open-xiaoai](https://github.com/idootop/open-xiaoai)（原项目已归档），现已从小爱音箱改造项目演进为一套**开源、本地优先的家庭 AI 智能管家系统**。每天在真实家庭中运行：客厅的小爱音箱、书房的蓝牙音箱、两路海康摄像头、客厅 TCL 电视、16 台跨品牌家电与手机 QQ 均接入同一套家庭大脑（小智服务端 + Hermes Agent + Home Assistant）。
+> **维护状态：活跃更新中。** 本项目最初 Fork 自 [idootop/open-xiaoai](https://github.com/idootop/open-xiaoai)（原项目已归档），现已从小爱音箱改造项目演进为一套**开源、本地优先的家庭 AI 智能管家系统**。每天在真实家庭中运行：客厅的小爱音箱、书房的蓝牙音箱、两路海康摄像头、客厅 TCL 电视、16 台跨品牌家电与手机 QQ 均接入同一套家庭大脑（内置轻量语音网关 + Hermes Agent + Home Assistant）。
 
 # Open-XiaoAI · 小七 — 开源家庭 AI 智能管家
 
@@ -13,9 +13,9 @@
 
 **真正的家庭智能不应被单个硬件或厂商生态所束缚，而应像生命体般在日常交互中进化。**
 
-现在，用家里一台常开的普通电脑 / mini PC 作为大脑，串联小智服务端、[Hermes Agent](https://github.com/NousResearch/hermes-agent)、[Home Assistant](https://www.home-assistant.io/) 与本地视觉模型，再把家里已有的硬件接成感官和手脚。住在你家里的 AI 管家“小七”：
+现在，用家里一台常开的普通电脑 / mini PC 作为大脑，串联内置轻量语音网关（[`voice-gateway`](deploy/voice-gateway/README.md)）、[Hermes Agent](https://github.com/NousResearch/hermes-agent)、[Home Assistant](https://www.home-assistant.io/) 与本地视觉模型，再把家里已有的硬件接成感官和手脚。住在你家里的 AI 管家“小七”：
 
-- **不挑语音硬件**：不只支持小爱音箱，任意带麦克风的蓝牙音箱、USB 麦克风 + 音箱（免刷机）、ESP32 小智硬件都能接入；唤醒和语音识别全部在家里完成，声音不出家门。
+- **不挑语音硬件**：不只支持小爱音箱，任意带麦克风的蓝牙音箱、USB 麦克风 + 音箱（免刷机）、兼容小智协议的 ESP32 语音硬件都能接入；唤醒和语音识别全部在家里本地 ONNX 完成，声音不出家门。
 - **会聊天、记得住**：什么都能问，唤醒一次就能一直聊下去；她说话时喊一声“你好小七”就停下听你的（小爱音箱），说“拜拜”马上结束；能联网查证，也能把你的习惯写进长期记忆。
 - **管全屋、会查账**：通过 Home Assistant 统一控制米家、海尔智家等跨品牌设备；说一句话真的执行，没执行成功不会乱答；还能查历史账本，“鱼缸灯今天亮了多久”“书房灯是谁关的”一问便知。
 - **会安排、能学会**：“两个小时后关鱼缸灯”，到点自己执行；“以后我说‘我回来了’，就开客厅灯”，教一次就记住；“洗衣机洗完了提醒我”，它自己去盯，并带安全风险边界。
@@ -33,7 +33,7 @@
 | --- | --- | --- | --- |
 | **电脑语音终端**（推荐入门） | 任意带麦克风的蓝牙音箱 / USB 麦克风 + 音箱 | **不需要** | 插到常开电脑上即用，支持多房间多终端、连续对话、房间上下文、开机自启与断线/静音自恢复，可选流式 Edge 或离线 Sherpa 音色 |
 | **小爱音箱** | 小爱音箱 Pro（LX06）/ Xiaomi 智能音箱 Pro（OH2P） | 需要刷机 | 小爱原生音色、子带回声消除实现**播报中途随时打断**、自带红外发射（可给待机电视开机）、支持主动语音播报 |
-| **ESP32 语音硬件** | 小智生态 ESP32 开发板 | 烧录小智固件 | 直接接入同一套小智服务端与 Hermes 大脑 |
+| **ESP32 语音硬件** | 兼容小智协议的 ESP32 开发板 | 烧录语音固件 | 通过小智 WebSocket 协议直接接入内置语音网关与 Hermes 大脑 |
 | **QQ 私聊** | 手机 / 电脑 QQ | **不需要** | 零硬件门槛，出门在外随时文字查状态、控家电、查历史，**经过与音箱相同的工具调用防幻觉护栏**；同时接收异常告警与摄像头抓拍图 |
 
 电脑语音终端目前在 **Windows 11 mini PC + 京鱼座蓝牙小黑胶** 上长期运行验收（这台音箱的麦克风只有 8 kHz 通话音质，近距离可用、远场一般，换 USB 会议麦克风效果更好；终端采用轮流听说，播报时不收音，暂不支持中途打断）。👉 [电脑语音终端](examples/voice-terminal/README.md) · [多终端方案与测试记录](docs/cross-platform-voice-terminal-plan.md) · [视频：一台小主机 + 一个音箱，DIY AI 家庭管家](https://www.bilibili.com/video/BV1BTpL6AEPC)
@@ -129,7 +129,7 @@
 
 ### 在家主动开口，出门 QQ 遥控与告警
 
-- **在家主动播报**：联动、提醒、定时任务会通过客厅小爱主动播报（使用小爱原生音色）；勿扰时段跟随小爱自己的设置，这段时间普通消息自动静音，而漏水、烟雾、燃气等安全报警半夜也会响。
+- **在家主动播报**：联动、提醒、定时任务默认通过客厅小爱主动播报（小爱原生音色；勿扰时段跟随米家设置，普通消息自动静音，漏水/烟雾/燃气等安全报警半夜照样响）；内置语音网关还提供 `POST /announce` 接口，可直接按房间或设备 ID 向书房蓝牙音箱等任意在线终端主动播报。
 - **出门 QQ 私聊控家**：通过 Hermes 内置的 `qqbot`（QQ 官方机器人 API v2，配对私聊、群聊关闭），出门在外也能用 QQ 问小七“客厅灯关了吗”“帮我把鱼缸灯关了”“冰箱现在几度”。QQ 对话通过 `qq_guard` 插件复用音箱同款工具调用护栏与场景直跑逻辑；因为 QQ 没有房间上下文，只说“开灯”会先问你要开哪一间。
 - **异常告警与抓拍直推 QQ**：Home Assistant 通过本地 webhook（不经大模型，直达 QQ）推送家庭异常告警，已配置：
   - 阳台水浸传感器检测到漏水 / 恢复干燥；
@@ -208,17 +208,17 @@
 ```text
 【交互入口】                                     【家庭 AI 大脑（常开小主机）】
 书房等房间：蓝牙 / USB 音箱 ⇄ 电脑语音终端 ─────┐
-客厅：小爱音箱 ⇄ Open-XiaoAI 桥接（含本地放歌）─┼⇄ 小智服务端 ⇄ Hermes Agent ⇄ DeepSeek
-其他房间：ESP32 小智硬件 ───────────────────────┘  语音识别·合成     │
-手机 / 外出：QQ 私聊 ⇄ qq_guard（同款工具护栏）──────────────────────┤
-                                                                     ├─ 长期记忆 / Skills / 联网搜索 / 定时任务
-                                                                     ├─ MCP home_rules（语音教场景与联动）
-                                                                     ├─ MCP home_history（设备历史统计）
-                                                                     ├─ MCP tv_control ── 电视助手 ── 客厅 TCL 安卓电视
-                                                                     └─ Home Assistant ── 米家、海尔智家等跨品牌设备
-                                                                         ├─ 设备控制、状态查询、场景与联动
-                                                                         ├─ 主动语音播报 → 客厅小爱
-                                                                         └─ 异常告警 webhook → QQ 私聊
+客厅：小爱音箱 ⇄ Open-XiaoAI 桥接（含本地放歌）─┼⇄ 语音网关 ⇄ Hermes Agent ⇄ DeepSeek
+其他房间：ESP32 语音硬件 ───────────────────────┘  ONNX 识别·合成  │
+手机 / 外出：QQ 私聊 ⇄ qq_guard（同款工具护栏）────────────────────┤
+                                                                   ├─ 长期记忆 / Skills / 联网搜索 / 定时任务
+                                                                   ├─ MCP home_rules（语音教场景与联动）
+                                                                   ├─ MCP home_history（设备历史统计）
+                                                                   ├─ MCP tv_control ── 电视助手 ── 客厅 TCL 安卓电视
+                                                                   └─ Home Assistant ── 米家、海尔智家等跨品牌设备
+                                                                       ├─ 设备控制、状态查询、场景与联动
+                                                                       ├─ 主动语音播报 → 客厅小爱 / 网关 /announce
+                                                                       └─ 异常告警 webhook → QQ 私聊
 
 【本地视觉看家】
 客厅、连廊摄像头 ──RTSP──┬─ Home Assistant：Generic Camera，看实时画面
@@ -228,7 +228,7 @@
                               └─ 重点区域有人 → QQ 私聊推抓拍图
 ```
 
-- **小智服务端**负责“耳朵和嘴”：语音识别、语音合成，并按设备独立配置音色、房间上下文和输出模式（不写死在代码里）。
+- **内置轻量语音网关（[`voice-gateway`](deploy/voice-gateway/README.md)）**负责“耳朵和嘴”：纯 Python + `sherpa-onnx` int8 SenseVoiceSmall 本地语音识别（无 PyTorch 依赖），PyAV 进程内流式解码 Edge 语音（断网自动回退离线 Sherpa），按设备独立配置音色、房间上下文和输出模式，并提供 `POST /announce` 主动播报接口。
 - **Hermes Agent** 负责“想和做”：理解意图、长期记忆、联网搜索、定时任务，并通过 MCP 调用家庭工具；语音和 QQ 入口都经过同一套工具调用防幻觉护栏与场景快捷路径。
 - **多种语音终端**：普通蓝牙 / USB 音箱运行独立的电脑语音终端（免刷机，可选流式 Edge 或离线 Sherpa 语音）；小爱音箱通过 Open-XiaoAI 桥接监听唤醒词、做子带回声消除实现中途打断，并支持本地曲库离线放歌。
 - **场景与历史查询**：由两个轻量 MCP 服务（`home_rules`、`home_history`）提供给 Hermes——前者做校验、风险分级并写入 Home Assistant，后者读取 HA 历史与日志做精确统计。
@@ -239,13 +239,14 @@
 
 家庭管家要每天用，稳定比炫技重要。本项目在真实家庭环境里逐项实测、修正：
 
+- **轻量语音网关，低内存、快启动**：内置 [`voice-gateway`](deploy/voice-gateway/README.md) 镜像仅 `586 MB`、稳态内存约 `350 MiB`，4 秒启动完成；Edge 流式语音进程内直接解码并支持断网自动回退离线 Sherpa。
 - **唤醒更准**：给“你好小七”单独设阈值，扩大解码搜索，两路错开检测。离线测试 23 遍平均认出 22.6 遍，20 分钟电视声音里零误唤醒。👉 [唤醒率测试](docs/xiaoai-wake-rate-test.md)
 - **播报时也听得见**：小爱音箱把自己正在播放的声音一并发回，桥接用自己写的子带回声消除把它减掉，小七说话时也能认出“你好小七”。离线录音测试（1 米、3 米，音量 40 到 75）六组共约 81 次呼叫，认出 80 次以上，原来的方式只认出 1 次；播报 10 分钟零误唤醒，原来有 5 次，都是被小七自己说的“你好…小七”触发。WebRTC 的回声消除会把人声一起压掉，测过后放弃。真机连续打断 5 次，都是一次成功。👉 [中途打断测试](docs/xiaoai-barge-in-test.md)
 - **追问不漏**：每轮开始听之前重置说话检测模型。以前它运行久了，会把回答之后的追问当成静音。
 - **网络抖动不失聪**：心跳和发送卡住检测，断线快速重连；音频改用二进制帧，流量从约 92 KB/s 降到 37 KB/s。断网 30 秒，网络恢复后 1 秒内连回。电脑语音终端还支持蓝牙/麦克风静默全零自动重开与驱动恢复。👉 [音频健康日志与连接恢复](deploy/audio-health/README.md)
 - **响应快且不瞎说**：接入 Hermes 只比直连大模型多约 0.1 秒，从说完话到灯灭约 2 秒；已保存的场景口令直接执行并在约 0.35 秒起播；工具调用护栏拦截未实际执行就宣称完成的回复。👉 [接入与延迟测试报告](docs/xiaoai-xiaozhi-hermes-latency-report.md)
-- **多音色适配**：小爱可用原生音色（也可切回离线流式 Sherpa）；电脑终端可选流式 Edge（实测说完到出声中位数 1.17 秒）或离线 Sherpa（约 1.36 秒）。👉 [TTS 输出模式](deploy/sherpa-tts/README.md)
-- **长期运行可排查**：音箱、桥接、终端、后端各自记录音频健康日志，出问题能对照到每 10 秒。
+- **多音色适配**：小爱可用原生音色（也可切回离线流式 Sherpa）；电脑终端可选流式 Edge（实测说完到出声中位数 1.17 秒）或离线 Sherpa（约 1.36 秒），且 Edge 异常时自动回退 Sherpa。👉 [离线 Sherpa TTS](deploy/sherpa-tts/README.md)
+- **长期运行可排查**：音箱、桥接、终端、网关各自记录音频健康日志，出问题能对照到每 10 秒。
 
 ## 演示视频
 
@@ -281,7 +282,7 @@
 
 在家里常开的电脑 / mini PC 上依次部署：
 
-1. **小智服务端与语音合成**：负责语音识别与语音合成 👉 [Sherpa / 小智服务端](deploy/sherpa-tts/README.md)
+1. **内置轻量语音网关（`voice-gateway`）**：负责本地 ONNX 语音识别、流式语音合成、多终端接入与主动播报 👉 [轻量语音网关](deploy/voice-gateway/README.md)（可选离线 TTS 见 [Sherpa TTS](deploy/sherpa-tts/README.md)）
 2. **Home Assistant**：接入米家、海尔智家或其他 HA 支持的设备 👉 [Home Assistant 部署与设备接入](deploy/homeassistant/README.md)
 3. **Hermes Agent**：接入大模型、长期记忆、定时任务、语音教规则、设备历史查询与工具调用护栏 👉 [Hermes 部署说明](deploy/hermes/README.md)
 
@@ -296,7 +297,7 @@
 
   1. 刷机更新小爱音箱补丁固件，开启并 SSH 连接 👉 [刷机教程](docs/flash.md) · [视频：用 AI 帮你刷机](https://www.bilibili.com/video/BV1Lph86ZEfd)
   2. 在小爱音箱上安装 Client 端补丁程序，使用本仓库 [Releases](https://github.com/OwnDing/open-xiaoai/releases) 里 `client-` 开头的版本（中途打断需要 `client-2026.10.09` 或更新版本）👉 [安装教程](packages/client-rust/README.md)
-  3. 部署小爱桥接并连接到小智服务端 👉 [小爱音箱接入小智 AI](examples/xiaozhi/README.md)
+  3. 部署小爱桥接并连接到本地语音网关 👉 [小爱桥接配置](examples/xiaozhi/README.md)
 - **方式 C：手机 QQ 入口（零硬件门槛）**
   - 在 Hermes 中配置 QQ 官方机器人凭据并完成私聊配对，出门也能用文字跟小七控家 👉 [QQ 机器人配置](deploy/hermes/README.md#qq-chatting-with-小七-and-notifications)
 
@@ -315,11 +316,12 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [轻量语音网关](deploy/voice-gateway/README.md) | 内置本地 ONNX 语音识别、流式 Edge / 离线 Sherpa TTS、多终端路由与 `/announce` 主动播报 |
 | [Hermes 部署说明](deploy/hermes/README.md) | 大脑接入、定时任务、语音教场景与联动、设备历史查询、主动播报、QQ 对话与护栏 |
 | [Home Assistant 接入](deploy/homeassistant/README.md) | 米家官方集成、HACS 与海尔智家集成、30 天历史保留、让小七认识新设备 |
-| [电脑语音终端](examples/voice-terminal/README.md) | 普通蓝牙 / USB 音箱免刷机接入、开机自启、静音自恢复、多设备共用后端 |
+| [电脑语音终端](examples/voice-terminal/README.md) | 普通蓝牙 / USB 音箱免刷机接入、开机自启、静音自恢复、多设备共用网关 |
 | [小爱桥接](examples/xiaozhi/README.md) | 小爱音箱部署、唤醒词、连续对话、中途打断、退出词与本地音乐配置 |
-| [TTS 输出模式](deploy/sherpa-tts/README.md) | 小爱原生音色、流式 Edge 与离线 Sherpa 语音的切换和调优 |
+| [离线 Sherpa TTS](deploy/sherpa-tts/README.md) | 离线 Sherpa 语音合成服务与音色输出模式说明 |
 | [小七放本地音乐](docs/xiaoqi-music.md) | 离线放歌的工作方式、单独的音乐音量、曲库识别、实测记录 |
 | [小七电视助手](deploy/tv-helper/README.md) | 控制安卓电视：电视上的助手、开关机、奇异果找片选集、TCL 系统限制调查、没采用的方案 |
 | [摄像头人物检测](deploy/person-watch/README.md) | RTSP 摄像头接入 Home Assistant、小模型人物检测、抓拍记录、HA 传感器、QQ 推送、调参 |
