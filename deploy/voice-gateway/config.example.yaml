@@ -1,0 +1,57 @@
+# Compatible with xiaozhi-esp32-server's data/.config.yaml.
+# You can mount your existing xiaozhi-server/data/.config.yaml directly, or use
+# this slim standalone config.
+
+selected_module:
+  ASR: SherpaASR
+  LLM: HermesAgentLLM
+  TTS: SherpaOnnxTTS
+
+ASR:
+  SherpaASR:
+    type: sherpa_onnx_local
+    model_dir: models/sherpa-onnx-sense-voice
+    language: auto
+    use_itn: true
+    num_threads: 2
+
+LLM:
+  HermesAgentLLM:
+    type: hermes
+    base_url: http://hermes:8642/v1
+    model_name: xiaoqi-home
+    api_key: your-hermes-api-server-key
+    temperature: 0.7
+    tool_guard: true
+    ha_url: http://homeassistant:8123
+    ha_token: your-ha-long-lived-token
+    music_url: http://host.docker.internal:4400
+    timeout:
+      connect: 3.0
+      read: 90.0
+
+TTS:
+  EdgeStreamTTS:
+    type: edge_stream
+    voice: zh-CN-XiaoxiaoNeural
+  EdgeTTS:
+    type: edge
+    voice: zh-CN-XiaoxiaoNeural
+  SherpaOnnxTTS:
+    type: index_stream
+    api_url: http://sherpa-tts:11996/tts
+    voice: xiao_ya
+
+voice_devices:
+  "02:76:74:00:00:01":
+    output: server_audio
+    tts: EdgeStreamTTS
+    room: 书房
+    reply_style: sentence
+    send_interval_ms: 50
+
+# Optional: post utterances to deploy/voiceprint in parallel with ASR.
+# voiceprint:
+#   url: http://voiceprint:8300
+#   key: your-voiceprint-key
+#   timeout_s: 1.5
