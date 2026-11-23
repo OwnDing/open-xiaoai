@@ -1,0 +1,31 @@
+services:
+  voice-gateway:
+    build:
+      context: .
+    image: local/xiaoqi-voice-gateway:1.0
+    container_name: voice-gateway
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - GATEWAY_CONFIG=/app/data/.config.yaml
+      - GATEWAY_ASR_THREADS=3
+      - GATEWAY_MAX_AUDIO_S=30
+      - XIAOZHI_TTS_OUTPUT_MODE=${XIAOZHI_TTS_OUTPUT_MODE:-native_xiaomi}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${GATEWAY_WS_PORT:-18000}:8000"
+      - "${GATEWAY_HTTP_PORT:-18003}:8003"
+    volumes:
+      # Reuse existing xiaozhi-server data (.config.yaml + audio-health.jsonl) and ONNX ASR model.
+      - ${XIAOZHI_DATA_DIR:-../../../xiaozhi-server/data}:/app/data
+      - ${XIAOZHI_ASR_MODEL_DIR:-../../../xiaozhi-server/models/sherpa-onnx-sense-voice}:/app/models/sherpa-onnx-sense-voice:ro
+      # Mount Hermes tool-call guard (+ optional voice_enroll.py) and home_rules helpers.
+      - ../hermes/xiaozhi-provider:/app/hermes-provider:ro
+      - ../hermes/profile/mcp/home_rules:/app/home-rules:ro
+    networks:
+      - xiaozhi-server_default
+
+networks:
+  xiaozhi-server_default:
+    external: true
