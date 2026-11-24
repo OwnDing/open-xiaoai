@@ -40,7 +40,7 @@ SENSOR_CLASSES = {
 }
 # Appliances (fridge, washer...) bring dozens of entities; their status
 # sensors and set-points are listed only once exposed to voice assistants.
-EXPOSABLE_DOMAINS = {"sensor", "binary_sensor", "select", "number", "button"}
+EXPOSABLE_DOMAINS = {"sensor", "binary_sensor", "select", "number", "button", "camera"}
 MAX_LINES = 80
 
 
